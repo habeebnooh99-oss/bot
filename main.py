@@ -204,11 +204,12 @@ async def open_tree_node(call: types.CallbackQuery):
     for name, item in node.get("children", {}).items():
         new_path = f"{path}>{name}" if path != "root" else name
         
-        if "price" in item:
+        # التعديل هنا: فحص المجلدات أولاً لضمان عدم خلطها مع المنتجات
+        if item.get("type") == "folder" or "children" in item:
+            kb.append([InlineKeyboardButton(text=f"📁 {name}", callback_data=f"open_{new_path}")])
+        elif "price" in item:
             price = item.get('price', 0)
             kb.append([InlineKeyboardButton(text=f"🛒 {name} ({price}$)", callback_data=f"buyprod_{new_path}")])
-        elif item.get("type") == "folder":
-            kb.append([InlineKeyboardButton(text=f"📁 {name}", callback_data=f"open_{new_path}")])
         else:
             kb.append([InlineKeyboardButton(text=f"🛒 {name}", callback_data=f"buyprod_{new_path}")])
             
