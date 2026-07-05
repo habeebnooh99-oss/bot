@@ -11,9 +11,9 @@
                             "type": "folder",
                             "children": {
                                 "110 جوهرة": {
-                                    "type": "prod",
-                                    "children": null,
-                                    "price": "1"
+                                    "type": "folder",
+                                    "children": {},
+                                    "price": 0
                                 }
                             },
                             "price": 0
