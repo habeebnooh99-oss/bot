@@ -15,7 +15,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # --- البيانات الأساسية والثوابت ---
-TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
+TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"  # ⚠️ يرجى تغيير هذا التوكن فوراً من BotFather للأمان!
 ADMIN_ID = 8529336745  # الآدمن سلمان
 
 # --- قاعدة البيانات المؤقتة في الذاكرة ---
@@ -112,7 +112,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 **معلومات حسابك الشخصي:**\n\n"
             f"🆔 الآيدي الخاص بك: `{user_id}`\n"
             f"📝 الاسم: {u['name']}\n"
-            f"🇬🇧 رصيدك بالدينار: `{u['balance_jod']:.2f} JOD`\n"
+            f"🇯🇴 رصيدك بالدينار: `{u['balance_jod']:.2f} JOD`\n"
             f"💵 رصيدك بالدولار: `{u['balance_usd']:.2f} USD`\n"
             f"📉 نسبة خصمك الخاصة: %{u['discount']}"
         )
@@ -369,36 +369,8 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 await query.edit_message_text("❌ فشل القبول بسبب عدم توفر رصيد كافي فجائي لدى الزبون.")
         
         elif order["type"] == "charge":
-            # لوحة أزرار سريعة وموزعة ذكياً لمنع أي تعليق
-            txt = "💵 **يرجى اختيار قيمة الرصيد المراد شحنها وإضافتها الفورية للزبون ($):**"
-            kbd = [
-                [InlineKeyboardButton("1$", callback_data="fast_charge_1"), InlineKeyboardButton("2$", callback_data="fast_charge_2"), InlineKeyboardButton("5$", callback_data="fast_charge_5")],
-                [InlineKeyboardButton("10$", callback_data="fast_charge_10"), InlineKeyboardButton("20$", callback_data="fast_charge_20"), InlineKeyboardButton("50$", callback_data="fast_charge_50")],
-                [InlineKeyboardButton("100$", callback_data="fast_charge_100"), InlineKeyboardButton("150$", callback_data="fast_charge_150"), InlineKeyboardButton("200$", callback_data="fast_charge_200")]
-            ]
-            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
-
-    elif data.startswith("fast_charge_"):
-        amount_usd = float(data.split("_")[2])
-        amount_jod = amount_usd * 0.71
-        
-        oid = USER_CONTEXT.get(ADMIN_ID, {}).get("target_order")
-        if not oid or oid not in DB["orders"] or DB["orders"][oid]["status"] != "pending":
-            await query.edit_message_text("⚠️ حدث خطأ أو أن الطلب تم شحنه مسبقاً.")
-            return ConversationHandler.END
-            
-        order = DB["orders"][oid]
-        uid = order["user_id"]
-        
-        DB["users"][uid]["balance_usd"] += amount_usd
-        DB["users"][uid]["balance_jod"] += amount_jod
-        order["status"] = "accepted"
-        
-        await query.edit_message_text(f"✅ تم بنجاح إضافة الرصيد للزبون تلقائياً بقيمة `{amount_usd:.2f} USD` ما يعادل `{amount_jod:.2f} JOD`.")
-        await context.bot.send_message(
-            chat_id=uid,
-            text=f"🎉 **تم إضافة وشحن الرصيد إلى محفظتك بنجاح!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
-        )
+            await query.edit_message_text("💵 **يرجى كتابة وإرسال قيمة الرصيد المراد إضافته للزبون بالدولار ($):**")
+            return ADMIN_WAIT_CHARGE_AMOUNT
 
     elif data.startswith("adm_order_reject_"):
         oid = int(data.split("_")[3])
@@ -416,6 +388,8 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب الشراء الخاص بك.** يرجى التواصل مع الإدارة الفنية لمعرفة السبب.")
         else:
             await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب شحن الرصيد الخاص بك.** يرجى الاتصال بالدعم الفني.")
+            
+        return ConversationHandler.END
 
     elif data == "adm_manage_shop" or data.startswith("adm_browse_"):
         cat_id = None
@@ -474,11 +448,13 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
         for p_id in to_del: DB["products"].pop(p_id, None)
         
         await query.edit_message_text("✅ تم حذف القسم وجميع محتوياته المباشرة بنجاح. اضغط /start للتحديث.")
+        return ConversationHandler.END
 
     elif data.startswith("adm_del_prod_"):
         pid = int(data.split("_")[3])
         DB["products"].pop(pid, None)
         await query.edit_message_text("✅ تم حذف المنتج من القسم بنجاح. اضغط /start للتحديث.")
+        return ConversationHandler.END
 
     elif data == "adm_list_users":
         txt = "👥 **قائمة العملاء والزبائن المسجلين في البوت حالياً:**\n\n"
@@ -488,7 +464,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
     elif data == "adm_broadcast_menu":
-        txt = "📢 **قسم إرسال الإعلانات والرسائل الترويجية:**\n\nيرجى تحديد فئة الاستهداف المرادة:"
+        txt = "📢 **قسم إرسال الإعلانات والرسائل الترويجية:**\n\nيرجى تحديد فئة الاستشاف المرادة:"
         kbd = [
             [InlineKeyboardButton("🌍 إرسال إعلان شامل للكل", callback_data="adm_bc_all")],
             [InlineKeyboardButton("👤 إرسال إعلان لشخص معين", callback_data="adm_bc_user")],
@@ -534,7 +510,7 @@ async def adm_get_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def adm_get_prod_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     USER_CONTEXT[ADMIN_ID]["new_prod_desc"] = update.message.text
-    await update.message.reply_text("🇬🇧 **الآن، يرجى إدخال سعر المنتج بالدينار الأردني (رقم فقط):**")
+    await update.message.reply_text("🇯🇴 **الآن، يرجى إدخال سعر المنتج بالدينار الأردني (رقم فقط):**")
     return ADMIN_WAIT_PROD_JOD
 
 async def adm_get_prod_jod(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -667,7 +643,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(client_handler, pattern="^(charge_orange|buy_prod_now)$"),
-            CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_add_cat|adm_add_prod|adm_bc_all|adm_bc_user|adm_discounts_menu)$")
+            CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_order_accept_|adm_add_cat|adm_add_prod|adm_bc_all|adm_bc_user|adm_discounts_menu)$")
         ],
         states={
             CLIENT_WAIT_CHARGE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_get_charge_text)],
@@ -688,19 +664,19 @@ def main():
         allow_reentry=True
     )
 
-    # وضع الـ ConversationHandler في القمة لمعالجة الحالات النصية أولاً بنجاح
+    # إضافة الـ ConversationHandler أولاً لحفظ ترتيب حالات الإدخال النصية
     application.add_handler(conv_handler)
     
-    # الـ Command العادي
+    # إضافة CommandHandler للأمر start بشكل أساسي
     application.add_handler(CommandHandler("start", start))
     
-    # معالجة كافة الأزرار التفاعلية الفورية لضمان الاستجابة التامة ومنع الساعة الرملية المعلقة
+    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu|adm_bc_all|adm_bc_user|adm_discounts_menu|adm_order_accept_|fast_charge_|adm_order_reject_|main_menu)"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)$"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu|adm_bc_all|adm_bc_user|adm_order_reject_)"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(client_shop|browse_cat_|view_prod_|main_menu|client_profile|client_support|client_orders|client_charge)$"))
 
-    # بدء تشغيل البوت بنظام الهز والتحري (Polling)
+    # تشغيل البوت بسلاسة
     application.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
