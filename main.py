@@ -1,4 +1,4 @@
-import logging
+import logging  # هي الكود ضيفلي اياه انت لا تغير شي بس ضيف كود الرصيد
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -670,11 +670,11 @@ def main():
     # إضافة CommandHandler للأمر start بشكل أساسي
     application.add_handler(CommandHandler("start", start))
     
-    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # [تكملة السطور المقطوعة بأمان وبنفس الأسلوب]:
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)$"))
 
-    # بدء تشغيل البوت
+    # تشغيل البوت واستقبال التحديثات
     application.run_polling()
 
 if __name__ == '__main__':
