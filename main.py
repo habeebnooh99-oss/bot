@@ -1,326 +1,87 @@
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.enums import ParseMode
-import asyncio
-import os
+import telebot
 import json
+import os
+from telebot import types
 
-# التوكنات
-bot = Bot(token="8843060512:AAGH3WvLBmK9MgguZia5lpLW3WfJgLAGMRA")
-dp = Dispatcher(storage=MemoryStorage())
-ADMIN_BOT_TOKEN = "8741135682:AAEW-c-3D9NGPCwtnFsG35BYOz0yZtGjqj0"
-admin_bot = Bot(token=ADMIN_BOT_TOKEN)
+TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
 ADMIN_ID = 8529336745
+bot = telebot.TeleBot(TOKEN)
+DB_FILE = "alex_data.json"
 
-# حالات البوت
-class OrderStates(StatesGroup):
-    waiting_for_amount = State()
+def load():
+    if not os.path.exists(DB_FILE): return {"users": {}, "store": {}, "orders": []}
+    with open(DB_FILE, "r", encoding="utf-8") as f: return json.load(f)
 
-class CustomerStates(StatesGroup):
-    waiting_for_player_id = State()
-    buy_path = State()
-    buy_price = State()
+def save(data):
+    with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4, ensure_ascii=False)
 
-# --- دوال جلب البيانات ---
-def load_tree():
-    if not os.path.exists("store_tree.json"): return {"type": "folder", "children": {}}
-    with open("store_tree.json", "r", encoding="utf-8") as f: 
-        try: return json.load(f)
-        except: return {"type": "folder", "children": {}}
-
-# دالة جلب العقدة
-def get_node(path):
-    data = load_tree()
-    if path == "root" or not path: return data
-    curr = data
-    for key in path.split(">"):
-        children = curr.get("children", {})
-        curr = children.get(key, {"type": "folder", "children": {}})
-    return curr
-
-def load_discounts():
-    if not os.path.exists("discounts.json"): return {}
-    with open("discounts.json", "r", encoding="utf-8") as f: return json.load(f)
-
-# دالة التسجيل التلقائي للزبائن
-def register_user(user_id, username, first_name):
-    if not os.path.exists("users.txt"):
-        open("users.txt", "w").close()
-    with open("users.txt", "r") as f:
-        users = f.read().splitlines()
-    if str(user_id) not in users:
-        with open("users.txt", "a") as f:
-            f.write(str(user_id) + "\n")
-        try:
-            admin_bot.send_message(
-                ADMIN_ID, 
-                f"🆕 زبون جديد في المتجر!\n👤 الاسم: {first_name}\n🆔 الآيدي: <code>{user_id}</code>",
-                parse_mode=ParseMode.HTML
-            )
-        except:
-            pass
+@bot.message_handler(commands=['start'])
+def start(message):
+    data = load()
+    if str(message.chat.id) not in data['users']:
+        data['users'][str(message.chat.id)] = {"name": message.from_user.first_name, "balance": 0.0, "discount": 0}
+        save(data)
     
-    if not os.path.exists("balances.txt"):
-        open("balances.txt", "w").close()
-    with open("balances.txt", "r") as f:
-        lines = f.read().splitlines()
-    if not any(str(user_id) in line for line in lines):
-        with open("balances.txt", "a") as f:
-            f.write(f"{user_id}:0.0\n")
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add("🛍️ المتجر", "📦 طلباتي", "👤 حسابي", "💳 شحن الرصيد", "🎧 الدعم الفني")
+    if message.chat.id == ADMIN_ID: markup.add("🛠️ لوحة الإدارة")
+    bot.send_message(message.chat.id, "أهلاً بك في ALEX CARD", reply_markup=markup)
 
-# دالة جلب الرصيد
-def get_balance(user_id):
-    if not os.path.exists("balances.txt"):
-        return 0.0
-    with open("balances.txt", "r") as f:
-        for line in f:
-            if ":" in line:
-                uid, bal = line.strip().split(":")
-                if uid == str(user_id):
-                    return float(bal)
-    return 0.0
-
-# دالة تحديث الرصيد
-def update_balance(user_id, amount):
-    balances = {}
-    if os.path.exists("balances.txt"):
-        with open("balances.txt", "r") as f:
-            for line in f:
-                if ":" in line:
-                    uid, bal = line.strip().split(":")
-                    balances[uid] = float(bal)
-    balances[str(user_id)] = balances.get(str(user_id), 0.0) + float(amount)
-    with open("balances.txt", "w") as f:
-        for uid, bal in balances.items():
-            f.write(f"{uid}:{bal}\n")
-
-# القوائم
-def get_main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍️ المتجر", callback_data="open_root")],
-        [InlineKeyboardButton(text="💰 شحن الرصيد", callback_data="add_balance")],
-        [InlineKeyboardButton(text="🛒 طلباتي", callback_data="my_orders")],
-        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_account")],
-        [InlineKeyboardButton(text="🎧 الدعم الفني", callback_data="support")]
-    ])
-
-@dp.message(Command("start"))
-async def start(message: types.Message, state: FSMContext):
-    await state.clear()
-    register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    await message.answer("أهلاً بك في ALEX STORE! اختر ما تحتاجه من القائمة:", reply_markup=get_main_menu())
-
-@dp.message(Command("list"))
-async def show_users(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        if os.path.exists("users.txt"):
-            with open("users.txt", "r") as f:
-                users = f.read().splitlines()
-                await message.answer(f"👥 **قائمة الزبائن ({len(users)}):**\n\n" + "\n".join([f"<code>{u}</code>" for u in users]), parse_mode=ParseMode.HTML)
-
-@dp.message(F.photo | F.document | F.text | F.video)
-async def forward_to_admin(message: types.Message, state: FSMContext):
-    if message.text and message.text.startswith("/"):
-        return
-    current_state = await state.get_state()
-    if current_state == CustomerStates.waiting_for_player_id.state:
-        return
-        
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ قبول", callback_data=f"accept_{message.from_user.id}"),
-         InlineKeyboardButton(text="❌ رفض", callback_data=f"reject_{message.from_user.id}")]
-    ])
-    text = f"🔔 طلب جديد من: {message.from_user.first_name}\n🆔 الآيدي: <code>{message.from_user.id}</code>"
-    if message.photo:
-        await admin_bot.send_photo(ADMIN_ID, photo=message.photo[-1].file_id, caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    elif message.document:
-        await admin_bot.send_document(ADMIN_ID, document=message.document.file_id, caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    elif message.video:
-        await admin_bot.send_video(ADMIN_ID, video=message.video.file_id, caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    else:
-        await admin_bot.send_message(ADMIN_ID, f"{text}\n\nالرسالة: {message.text}", reply_markup=kb, parse_mode=ParseMode.HTML)
-    await message.answer("✅ تم استلام طلبك وإرساله للإدارة!")
-
-@dp.message(OrderStates.waiting_for_amount)
-async def process_amount(message: types.Message, state: FSMContext):
-    try:
-        amount = float(message.text)
-        data = await state.get_data()
-        uid = data.get('uid')
-        if not uid:
-            return
-        update_balance(uid, amount)
-        await message.answer(f"✅ تمت إضافة {amount}$ للزبون `{uid}`.")
-        await bot.send_message(chat_id=int(uid), text=f"🎉 تم قبول طلبك! تمت إضافة {amount}$ لرصيدك.", parse_mode=ParseMode.HTML)
-        await state.clear()
-    except Exception as e:
-        await message.answer(f"⚠️ خطأ: {str(e)}")
-
-# --- التعديل هنا: السماح بأي بيانات وإلغاء شرط طول الآيدي ---
-@dp.message(CustomerStates.waiting_for_player_id)
-async def process_buy_id(message: types.Message, state: FSMContext):
-    user_input = message.text
-    data = await state.get_data()
-    path = data.get('buy_path')
-    price = data.get('buy_price')
-    user_id = message.from_user.id
+# --- نظام الطلبات التفاعلي (الأزرار تحت الرسالة) ---
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    data = load()
+    action, user_id = call.data.split("_")
     
-    # تم إزالة شرط الآيدي (isdigit و length)
-    bal = get_balance(user_id)
-    if bal < price:
-        await message.answer(f"⚠️ رصيدك غير كافي لإتمام العملية.\n💰 السعر المطلوب: {price}$\n💵 رصيدك الحالي: {bal}$", reply_markup=get_main_menu())
-        await state.clear()
-        return
+    if action == "accept":
+        # خصم الرصيد أو إضافة الرصيد حسب نوع الطلب
+        bot.answer_callback_query(call.id, "تم القبول")
+        bot.send_message(user_id, "✅ تم قبول طلبك!")
+    elif action == "reject":
+        bot.answer_callback_query(call.id, "تم الرفض")
+        bot.send_message(user_id, "❌ تم رفض طلبك، يرجى التواصل مع الإدارة.")
 
-    update_balance(user_id, -float(price))
-    
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ تم الشحن", callback_data=f"doneorder_{user_id}_{price}"),
-         InlineKeyboardButton(text="❌ مرفوض (إرجاع الرصيد)", callback_data=f"failorder_{user_id}_{price}")]
-    ])
-    admin_msg = (f"🛍️ **طلب شراء جديد!**\n\n"
-                 f"👤 الزبون: {message.from_user.first_name} (<code>{user_id}</code>)\n"
-                 f"🛒 المنتج: {path.split('>')[-1]}\n"
-                 f"💵 السعر المخصوم: {price}$\n"
-                 f"🎯 المعلومة المدخلة: <code>{user_input}</code>")
-    try:
-        await admin_bot.send_message(ADMIN_ID, admin_msg, reply_markup=admin_kb, parse_mode=ParseMode.HTML)
-    except: pass
-    
-    await message.answer(f"✅ تم خصم {price}$ من رصيدك وإرسال طلبك للإدارة.\nسيصلك إشعار فور إتمام الشحن.", reply_markup=get_main_menu())
-    await state.clear()
+# --- قسم شحن الرصيد مع الأزرار ---
+@bot.message_handler(func=lambda m: m.text == "💳 شحن الرصيد")
+def charge(message):
+    msg = "لشحن الرصيد حول لـ 0776445110 أرسل نص الحوالة:"
+    bot.send_message(message.chat.id, msg)
+    bot.register_next_step_handler(message, lambda m: send_charge_to_admin(m))
 
-@dp.callback_query(F.data.startswith("open_"))
-async def open_tree_node(call: types.CallbackQuery):
-    path = call.data.replace("open_", "")
-    node = get_node(path)
-    kb = []
-    
-    children = node.get("children", {})
-    
-    if not children:
-        await call.answer("هذا القسم فارغ حالياً", show_alert=True)
-        return
+def send_charge_to_admin(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("✅ قبول", callback_data=f"accept_{message.chat.id}"),
+               types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{message.chat.id}"))
+    bot.send_message(ADMIN_ID, f"طلب شحن من {message.from_user.first_name}:\n{message.text}", reply_markup=markup)
 
-    for name, item in children.items():
-        new_path = f"{path}>{name}" if path != "root" else name
-        if item.get("type") == "folder":
-            kb.append([InlineKeyboardButton(text=f"📁 {name}", callback_data=f"open_{new_path}")])
-        else:
-            price = item.get('price', 0)
-            kb.append([InlineKeyboardButton(text=f"🛒 {name} ({price}$)", callback_data=f"buyprod_{new_path}")])
-            
-    if path == "root":
-        kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="back_main")])
-    else:
-        parent_path = ">".join(path.split(">")[:-1]) if ">" in path else "root"
-        kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data=f"open_{parent_path}")])
+# --- قسم حسابي مع الخصم ---
+@bot.message_handler(func=lambda m: m.text == "👤 حسابي")
+def account(message):
+    data = load()
+    u = data['users'].get(str(message.chat.id), {"balance": 0, "discount": 0})
+    text = (f"👤 الاسم: `{message.from_user.first_name}`\n"
+            f"🆔 الآيدي: `{message.chat.id}`\n\n"
+            f"💰 الرصيد: `{u['balance']}` $\n"
+            f"📉 نسبة الخصم: `{u['discount']}%`")
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-    text = "🛍️ أقسام المتجر:" if path == "root" else f"📁 قسم: {path.split('>')[-1]}"
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+# --- لوحة الإدارة ---
+@bot.message_handler(func=lambda m: m.text == "🛠️ لوحة الإدارة")
+def admin_panel(message):
+    if message.chat.id != ADMIN_ID: return
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("👥 الزبائن", "📢 إرسال إعلان", "📉 إدارة الخصومات", "🔙 رجوع")
+    bot.send_message(message.chat.id, "لوحة التحكم:", reply_markup=markup)
 
-@dp.callback_query(F.data.startswith("buyprod_"))
-async def start_buy_product(call: types.CallbackQuery, state: FSMContext):
-    path = call.data.replace("buyprod_", "")
-    node = get_node(path)
-    price_usd = float(node.get("price", 0))
-    
-    discounts = load_discounts()
-    user_discount = float(discounts.get(str(call.from_user.id), 0))
-    final_price_usd = price_usd - (price_usd * (user_discount / 100))
-    price_jod = final_price_usd * 0.71
-    
-    # رسالة عامة تطلب "إرسال المطلوب هنا"
-    instr = "📝 الرجاء إرسال تفاصيل الطلب (آيدي، يوزر، رابط، أو أي معلومات مطلوبة) هنا:"
-    
-    msg = (f"🛒 **المنتج:** {path.split('>')[-1]}\n"
-           f"💰 **السعر النهائي (دولار):** {final_price_usd:.2f} $\n"
-           f"🇯🇴 **السعر النهائي (دينار):** {price_jod:.2f} JOD\n"
-           f"🏷️ **نسبة خصمك:** {user_discount}%\n\n"
-           f"{instr}")
-           
-    await state.update_data(buy_path=path, buy_price=final_price_usd)
-    await state.set_state(CustomerStates.waiting_for_player_id)
-    
-    parent_path = ">".join(path.split(">")[:-1]) if ">" in path else "root"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ إلغاء الشراء", callback_data=f"open_{parent_path}")]])
-    await call.message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
+@bot.message_handler(func=lambda m: m.text == "👥 الزبائن")
+def list_users(message):
+    data = load()
+    text = "\n".join([f"{u['name']} | ID: `{uid}`" for uid, u in data['users'].items()])
+    bot.send_message(ADMIN_ID, text or "لا يوجد زبائن", parse_mode="Markdown")
 
-@dp.callback_query(F.data.startswith("doneorder_"))
-async def admin_done_order(call: types.CallbackQuery):
-    _, uid, price = call.data.split("_", 2)
-    await call.message.edit_text(call.message.text + "\n\n✅ **تم الشحن بنجاح**")
-    try:
-        await bot.send_message(chat_id=int(uid), text=f"🎉 تم شحن طلبك بنجاح!", parse_mode=ParseMode.HTML)
-    except: pass
-    await call.answer()
+@bot.message_handler(func=lambda m: m.text == "📢 إرسال إعلان")
+def broadcast(message):
+    msg = bot.send_message(ADMIN_ID, "أرسل نص الإعلان:")
+    bot.register_next_step_handler(msg, lambda m: [bot.send_message(uid, m.text) for uid in load()['users']])
 
-@dp.callback_query(F.data.startswith("failorder_"))
-async def admin_fail_order(call: types.CallbackQuery):
-    _, uid, price = call.data.split("_", 2)
-    update_balance(uid, float(price))
-    await call.message.edit_text(call.message.text + "\n\n❌ **تم الرفض وتم إرجاع الرصيد للزبون**")
-    try:
-        await bot.send_message(chat_id=int(uid), text=f"❌ نعتذر، تم رفض طلب الشحن الخاص بك.\n💰 تم إرجاع المبلغ ({price}$) إلى رصيدك التلقائي.", parse_mode=ParseMode.HTML)
-    except: pass
-    await call.answer()
-
-@dp.callback_query()
-async def callback_handler(call: types.CallbackQuery, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state == CustomerStates.waiting_for_player_id.state:
-        await state.clear()
-
-    if call.data.startswith("accept_"):
-        uid = call.data.split("_")[1]
-        await state.update_data(uid=uid)
-        await state.set_state(OrderStates.waiting_for_amount)
-        await call.message.edit_text(f"✅ تم القبول لآيدي `{uid}`. اكتب المبلغ:")
-        return
-    elif call.data.startswith("reject_"):
-        uid = call.data.split("_")[1]
-        await call.message.edit_text(f"❌ تم رفض الآيدي: `{uid}`")
-        await bot.send_message(chat_id=int(uid), text="❌ تم رفض طلب شحن الرصيد الخاص بك.")
-        return
-
-    back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع", callback_data="back_main")]])
-    
-    if call.data == "back_main":
-        await call.message.edit_text("أهلاً بك في ALEX STORE! اختر ما تحتاجه من القائمة:", reply_markup=get_main_menu())
-    elif call.data == "my_account":
-        bal = get_balance(call.from_user.id)
-        text = (f"👤 **بيانات حسابك:**\n"
-                f"👤 الاسم: {call.from_user.first_name}\n"
-                f"🆔 الآيدي: <code>{call.from_user.id}</code>\n"
-                f"💰 رصيدك: {bal:.1f} $\n"
-                f"💵 رصيدك بالدينار: {bal*0.71:.2f} JOD")
-        await call.message.edit_text(text, reply_markup=back_kb, parse_mode=ParseMode.HTML)
-    elif call.data == "add_balance":
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="أورنج موني", callback_data="pay_orange"), 
-             InlineKeyboardButton(text="باينانس", callback_data="pay_binance")], 
-            [InlineKeyboardButton(text="🔙 رجوع", callback_data="back_main")]
-        ])
-        await call.message.edit_text("💰 اختر وسيلة الدفع:", reply_markup=kb)
-    elif call.data == "pay_orange":
-        await call.message.edit_text("💰 **محفظة أورنج موني:**\nالاسم: سلمان نوح سلمان\nالرقم: <code>0776445110</code>\n\nيرجى إرسال وصل التحويل هنا لتأكيد الطلب.", reply_markup=back_kb, parse_mode=ParseMode.HTML)
-    elif call.data == "support":
-        text = ("🎧 **للدعم الفني:**\n\n"
-                "📞 <a href='tel:+962776445110'>اتصال: 0776445110</a>\n"
-                "💬 <a href='https://wa.me/962776445110'>واتساب</a>\n"
-                "✈️ <a href='https://t.me/htb1b'>تليجرام الإدارة: @htb1b</a>")
-        await call.message.edit_text(text, reply_markup=back_kb, parse_mode=ParseMode.HTML)
-    elif call.data == "my_orders":
-        await call.message.edit_text("🛒 طلباتك الحالية:\nلا توجد طلبات معلقة.", reply_markup=back_kb)
-        
-    await call.answer()
-
-async def main():
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+bot.infinity_polling()
