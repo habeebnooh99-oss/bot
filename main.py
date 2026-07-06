@@ -369,7 +369,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 await query.edit_message_text("❌ فشل القبول بسبب عدم توفر رصيد كافي فجائي لدى الزبون.")
         
         elif order["type"] == "charge":
-            # [التعديل المطلب]: استبدال الإدخال النصي بلوحة أزرار سريعة من 1$ إلى 200$
+            # لوحة أزرار سريعة وموزعة ذكياً لمنع أي تعليق
             txt = "💵 **يرجى اختيار قيمة الرصيد المراد شحنها وإضافتها الفورية للزبون ($):**"
             kbd = [
                 [InlineKeyboardButton("1$", callback_data="fast_charge_1"), InlineKeyboardButton("2$", callback_data="fast_charge_2"), InlineKeyboardButton("5$", callback_data="fast_charge_5")],
@@ -377,10 +377,8 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 [InlineKeyboardButton("100$", callback_data="fast_charge_100"), InlineKeyboardButton("150$", callback_data="fast_charge_150"), InlineKeyboardButton("200$", callback_data="fast_charge_200")]
             ]
             await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
-            return ConversationHandler.END
 
     elif data.startswith("fast_charge_"):
-        # [تابع للتعديل]: استقبال ومعالجة زر القيمة الفورية المحددة من الآدمن مباشرة دون الدخول بحوار معلق
         amount_usd = float(data.split("_")[2])
         amount_jod = amount_usd * 0.71
         
@@ -401,7 +399,6 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             chat_id=uid,
             text=f"🎉 **تم إضافة وشحن الرصيد إلى محفظتك بنجاح!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
         )
-        return ConversationHandler.END
 
     elif data.startswith("adm_order_reject_"):
         oid = int(data.split("_")[3])
@@ -419,8 +416,6 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب الشراء الخاص بك.** يرجى التواصل مع الإدارة الفنية لمعرفة السبب.")
         else:
             await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب شحن الرصيد الخاص بك.** يرجى الاتصال بالدعم الفني.")
-            
-        return ConversationHandler.END
 
     elif data == "adm_manage_shop" or data.startswith("adm_browse_"):
         cat_id = None
@@ -479,13 +474,11 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
         for p_id in to_del: DB["products"].pop(p_id, None)
         
         await query.edit_message_text("✅ تم حذف القسم وجميع محتوياته المباشرة بنجاح. اضغط /start للتحديث.")
-        return ConversationHandler.END
 
     elif data.startswith("adm_del_prod_"):
         pid = int(data.split("_")[3])
         DB["products"].pop(pid, None)
         await query.edit_message_text("✅ تم حذف المنتج من القسم بنجاح. اضغط /start للتحديث.")
-        return ConversationHandler.END
 
     elif data == "adm_list_users":
         txt = "👥 **قائمة العملاء والزبائن المسجلين في البوت حالياً:**\n\n"
@@ -674,7 +667,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(client_handler, pattern="^(charge_orange|buy_prod_now)$"),
-            CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_order_accept_|adm_add_cat|adm_add_prod|adm_bc_all|adm_bc_user|adm_discounts_menu)$")
+            CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_add_cat|adm_add_prod|adm_bc_all|adm_bc_user|adm_discounts_menu)$")
         ],
         states={
             CLIENT_WAIT_CHARGE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_get_charge_text)],
@@ -695,18 +688,18 @@ def main():
         allow_reentry=True
     )
 
-    # إضافة الـ ConversationHandler أولاً لحفظ ترتيب حالات الإدخال النصية
+    # وضع الـ ConversationHandler في القمة لمعالجة الحالات النصية أولاً بنجاح
     application.add_handler(conv_handler)
     
-    # إضافة CommandHandler للأمر start بشكل أساسي
+    # الـ Command العادي
     application.add_handler(CommandHandler("start", start))
     
-    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # معالجة كافة الأزرار التفاعلية الفورية لضمان الاستجابة التامة ومنع الساعة الرملية المعلقة
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu|adm_bc_all|adm_bc_user|adm_discounts_menu|fast_charge_|main_menu)"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu|adm_bc_all|adm_bc_user|adm_discounts_menu|adm_order_accept_|fast_charge_|adm_order_reject_|main_menu)"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)$"))
 
-    # بدء تشغيل البوت
+    # بدء تشغيل البوت بنظام الهز والتحري (Polling)
     application.run_polling()
 
 if __name__ == '__main__':
