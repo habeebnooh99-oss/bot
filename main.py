@@ -1,6 +1,4 @@
 import logging
-import json
-import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -19,7 +17,6 @@ logger = logging.getLogger(__name__)
 # --- البيانات الأساسية والثوابت ---
 TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
 ADMIN_ID = 8529336745  # الآدمن سلمان
-BALANCES_FILE = "balances.txt"
 
 # --- قاعدة البيانات المؤقتة في الذاكرة ---
 DB = {
@@ -32,46 +29,15 @@ DB = {
     "order_counter": 1
 }
 
-# دالة لحفظ الأرصدة في ملف خارجي للاحتفاظ بها عند الريستارت
-def save_balances_to_file():
-    try:
-        with open(BALANCES_FILE, "w") as f:
-            for uid, data in DB["users"].items():
-                f.write(f"{uid}:{data['balance_usd']}\n")
-    except Exception as e:
-        logger.error(f"Error saving balances: {e}")
-
-# دالة لتحميل الأرصدة من الملف عند تشغيل البوت لأول مرة
-def load_balances_from_file():
-    if os.path.exists(BALANCES_FILE):
-        try:
-            with open(BALANCES_FILE, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and ":" in line:
-                        uid_str, bal_str = line.split(":", 1)
-                        uid = int(uid_str)
-                        bal_usd = float(bal_str)
-                        if uid not in DB["users"]:
-                            DB["users"][uid] = {"name": "مستخدم مسجل مسبقاً", "balance_jod": bal_usd * 0.71, "balance_usd": bal_usd, "discount": 0}
-                        else:
-                            DB["users"][uid]["balance_usd"] = bal_usd
-                            DB["users"][uid]["balance_jod"] = bal_usd * 0.71
-        except Exception as e:
-            logger.error(f"Error loading balances: {e}")
-
-# تحميل الأرصدة فوراً عند بدء الملف
-load_balances_from_file()
-
 # --- حالات نظام إدارة الحوار (States) ---
 (
     # حالات العميل
     CLIENT_WAIT_PROD_INFO, CLIENT_WAIT_CHARGE_TEXT,
     # حالات الآدمن
     ADMIN_WAIT_CAT_NAME, ADMIN_WAIT_PROD_NAME, ADMIN_WAIT_PROD_DESC, ADMIN_WAIT_PROD_JOD, ADMIN_WAIT_PROD_USD,
-    ADMIN_WAIT_CHARGE_AMOUNT, ADMIN_WAIT_BROADCAST_ALL, ADMIN_WAIT_BROADCAST_USER_ID, ADMIN_WAIT_BROADCAST_USER_MSG,
+    ADMIN_WAIT_BROADCAST_ALL, ADMIN_WAIT_BROADCAST_USER_ID, ADMIN_WAIT_BROADCAST_USER_MSG,
     ADMIN_WAIT_DISCOUNT_USER_ID, ADMIN_WAIT_DISCOUNT_PERCENT
-) = range(13)
+) = range(12)
 
 # سياق التنقل للآدمن والعميل لحفظ مؤشرات الأقسام
 USER_CONTEXT = {} # {user_id: {"current_cat": id, "current_prod": id, "target_user": id, "target_order": id}}
@@ -114,6 +80,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="Markdown")
         
     return ConversationHandler.END
+
+# --- [أمر إضافة الرصيد الجديد عبر الكوماند للآدمن سلمان] ---
+async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    # التحقق من المدخلات (الأمر يحتاج آيدي ومبلغ)
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("⚠️ **طريقة استخدام الأمر غير صحيحة!**\nالرجاء إدخال الأمر كالتالي:\n`/add_balance آيدي_المستخدم المبلغ_بالدولار`\n\nمثال:\n`/add_balance 8529336745 10`", parse_mode="Markdown")
+        return
+
+    try:
+        target_uid = int(context.args[0])
+        amount_usd = float(context.args[1])
+        amount_jod = amount_usd * 0.71
+        
+        # التأكد من وجود الزبون في الداتابيز لتجنب الكراش
+        if target_uid not in DB["users"]:
+            DB["users"][target_uid] = {
+                "name": "مستخدم غير مسجل بالاسم الحالي",
+                "balance_jod": 0.0,
+                "balance_usd": 0.0,
+                "discount": 0
+            }
+            
+        DB["users"][target_uid]["balance_usd"] += amount_usd
+        DB["users"][target_uid]["balance_jod"] += amount_jod
+        
+        await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
+        
+        # إرسال إشعار تلقائي للزبون
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=f"🎉 **تم شحن وإضافة رصيد إلى حسابك من قبل الإدارة!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
+            )
+        except Exception as e:
+            logger.error(f"Could not send notification to user {target_uid}: {e}")
+            
+    except ValueError:
+        await update.message.reply_text("❌ خطأ! تأكد من أن الآيدي رقم صحيح والمبلغ رقم (مثال: 10 أو 5.5).")
 
 # =====================================================================
 #                          [ 👤 قسم العميل ]
@@ -289,17 +296,15 @@ async def client_get_charge_text(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.message.reply_text("✅ تم إرسال نص وتفاصيل الحوالة للآدمن بنجاح للتأكيد والمراجعة اليدوية.")
     
+    # [تعديل سلمان]: إشعار الشحن يأتيك بدون أزرار قبول ورفض، وبإمكانك الشحن فوراً بالكوماند
     admin_txt = (
         f"🚨 **طلب شحن رصيد جديد (قيد المراجعة)!**\n\n"
         f"👤 اسم العميل: {user.full_name}\n"
         f"🆔 آيدي العميل: `{user.id}`\n\n"
-        f"📄 **نص الحوالة المرسل:**\n{txt}"
+        f"📄 **نص الحوالة المرسل:**\n{txt}\n\n"
+        f"💡 لشحن هذا الزبون انسخ الكوماند وعدل القيمة:\n`/add_balance {user.id} 10`"
     )
-    kbd = [
-        [InlineKeyboardButton("✅ قبول والشحن", callback_data=f"adm_order_accept_{oid}"),
-         InlineKeyboardButton("❌ رفض الطلب", callback_data=f"adm_order_reject_{oid}")]
-    ]
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_txt, parse_mode="Markdown")
     
     USER_CONTEXT[user.id] = {"current_cat": None, "current_prod": None}
     return ConversationHandler.END
@@ -393,7 +398,6 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 u["balance_jod"] -= final_jod
                 u["balance_usd"] -= final_usd
                 order["status"] = "accepted"
-                save_balances_to_file() # حفظ فوري للملف بعد الخصم
                 
                 await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم `{oid}` وخصم السعر بنجاح.")
                 await context.bot.send_message(
@@ -402,10 +406,6 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 )
             else:
                 await query.edit_message_text("❌ فشل القبول بسبب عدم توفر رصيد كافي فجائي لدى الزبون.")
-        
-        elif order["type"] == "charge":
-            await query.edit_message_text("💵 **يرجى كتابة وإرسال قيمة الرصيد المراد إضافته للزبون بالدولار ($):**")
-            return ADMIN_WAIT_CHARGE_AMOUNT
 
     elif data.startswith("adm_order_reject_"):
         oid = int(data.split("_")[3])
@@ -421,9 +421,6 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
         
         if order["type"] == "buy":
             await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب الشراء الخاص بك.** يرجى التواصل مع الإدارة الفنية لمعرفة السبب.")
-        else:
-            await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب شحن الرصيد الخاص بك.** يرجى الاتصال بالدعم الفني.")
-            
         return ConversationHandler.END
 
     elif data == "adm_manage_shop" or data.startswith("adm_browse_"):
@@ -494,7 +491,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
     elif data == "adm_list_users":
         txt = "👥 **قائمة العملاء والزبائن المسجلين في البوت حالياً:**\n\n"
         for uid, u in DB["users"].items():
-            txt += f"👤 الاسم: {u['name']} | آيدي الحساب: `{uid}`\n💰 رصيد: `{u['balance_usd']:.2f} USD` / `{u['balance_jod']:.2f} JOD` | `% {u['discount']}` خصم\n-----------------------\n"
+            txt += f"👤 الاسم: {u['name']} | آيدي الحساب: `{uid}`\n💰 رصيد: `{u['balance_jod']:.2f} JOD` | `% {u['discount']}` خصم\n-----------------------\n"
         kbd = [[InlineKeyboardButton("⬅️ رجوع للوحة التحكم", callback_data="admin_panel")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
@@ -523,7 +520,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
 
 # =====================================================================
-#                    [ استكمال عمليات الإدخال الفنية للآدمن ]
+#                      [ استكمال عمليات الإدخال الفنية للآدمن ]
 # =====================================================================
 
 async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -578,36 +575,6 @@ async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("⚠️ يرجى إدخال قيمة رقمية صحيحة للسعر بالدولار:")
         return ADMIN_WAIT_PROD_USD
-
-async def adm_get_charge_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        amount_usd = float(update.message.text)
-        amount_jod = amount_usd * 0.71
-        
-        oid = USER_CONTEXT.get(ADMIN_ID, {}).get("target_order")
-        order = DB["orders"][oid]
-        uid = order["user_id"]
-        
-        # التأكد من تهيئة حساب العميل في حال لم يكن موجوداً بالـ DB المؤقتة
-        if uid not in DB["users"]:
-            DB["users"][uid] = {"name": "زبون المتجر", "balance_jod": 0.0, "balance_usd": 0.0, "discount": 0}
-
-        DB["users"][uid]["balance_usd"] += amount_usd
-        DB["users"][uid]["balance_jod"] += amount_jod
-        order["status"] = "accepted"
-        
-        # [الإصلاح السحري]: حفظ فوري للأرصدة في ملف balances.txt على السيرفر
-        save_balances_to_file()
-        
-        await update.message.reply_text(f"✅ تم بنجاح إضافة الرصيد للزبون تلقائياً بقيمة `{amount_usd:.2f} USD` ما يعادل `{amount_jod:.2f} JOD` وتم تحديث ملف balances.txt.")
-        await context.bot.send_message(
-            chat_id=uid,
-            text=f"🎉 **تم إضافة وشحن الرصيد إلى محفظتك بنجاح!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
-        )
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("⚠️ يرجى إدخال قيمة مالية رقمية صحيحة للشحن:")
-        return ADMIN_WAIT_CHARGE_AMOUNT
 
 async def adm_bc_all_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
@@ -695,7 +662,6 @@ def main():
             ADMIN_WAIT_PROD_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_desc)],
             ADMIN_WAIT_PROD_JOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_jod)],
             ADMIN_WAIT_PROD_USD: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_usd)],
-            ADMIN_WAIT_CHARGE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_charge_amount)],
             ADMIN_WAIT_BROADCAST_ALL: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bc_all_send)],
             ADMIN_WAIT_BROADCAST_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bc_user_get_id)],
             ADMIN_WAIT_BROADCAST_USER_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bc_user_send)],
@@ -709,15 +675,17 @@ def main():
     # إضافة الـ ConversationHandler أولاً لحفظ ترتيب حالات الإدخال النصية
     application.add_handler(conv_handler)
     
-    # إضافة CommandHandler للأمر start بشكل أساسي
+    # إضافة CommandHandler للأمر start
     application.add_handler(CommandHandler("start", start))
     
+    # [تعديل سلمان الجديد]: إضافة هاندلر الأمر الخاص بإضافة رصيد للزبائن
+    application.add_handler(CommandHandler("add_balance", add_balance_command))
+    
     # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
-    application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern=".*"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
+    application.append_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
+    application.append_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
+    application.append_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
-    # بدء تشغيل البوت
     application.run_polling()
 
 if __name__ == "__main__":
