@@ -488,7 +488,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
 
 # =====================================================================
-#                     [ استكمال عمليات الإدخال الفنية للآدمن ]
+#                      [ استكمال عمليات الإدخال الفنية للآدمن ]
 # =====================================================================
 
 async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -670,13 +670,12 @@ def main():
     # إضافة CommandHandler للأمر start بشكل أساسي
     application.add_handler(CommandHandler("start", start))
     
-    # [هنا الإصلاح السحري]: إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)$"))
 
-    # تشغيل البوت بالكامل
+    # بدء تشغيل البوت
     application.run_polling()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
