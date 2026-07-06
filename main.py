@@ -28,14 +28,18 @@ class CustomerStates(StatesGroup):
 # --- دوال جلب البيانات ---
 def load_tree():
     if not os.path.exists("store_tree.json"): return {"type": "folder", "children": {}}
-    with open("store_tree.json", "r", encoding="utf-8") as f: return json.load(f)
+    with open("store_tree.json", "r", encoding="utf-8") as f: 
+        try: return json.load(f)
+        except: return {"type": "folder", "children": {}}
 
+# [تعديل] دالة جلب العقدة لتكون أكثر مرونة
 def get_node(path):
     data = load_tree()
-    if path == "root": return data
+    if path == "root" or not path: return data
     curr = data
     for key in path.split(">"):
-        curr = curr["children"].get(key, {"type": "folder", "children": {}})
+        children = curr.get("children", {})
+        curr = children.get(key, {"type": "folder", "children": {}})
     return curr
 
 def load_discounts():
@@ -165,7 +169,6 @@ async def process_buy_id(message: types.Message, state: FSMContext):
     input_type = data.get('input_type', 'id')
     user_id = message.from_user.id
     
-    # فحص الآيدي للألعاب فقط (من 6 لـ 15 رقم)
     if input_type == "id":
         if not user_input.isdigit() or not (6 <= len(user_input) <= 15):
             await message.answer("⚠️ خطأ: الآيدي يجب أن يكون أرقاماً فقط وطوله بين 6 و 15 رقم.")
@@ -195,23 +198,21 @@ async def process_buy_id(message: types.Message, state: FSMContext):
     await message.answer(f"✅ تم خصم {price}$ من رصيدك وإرسال طلبك للإدارة.\nسيصلك إشعار فور إتمام الشحن.", reply_markup=get_main_menu())
     await state.clear()
 
+# [تعديل] دالة عرض الأقسام لتكون متوافقة مع الكود الموحد
 @dp.callback_query(F.data.startswith("open_"))
 async def open_tree_node(call: types.CallbackQuery):
     path = call.data.replace("open_", "")
     node = get_node(path)
     kb = []
     
-    for name, item in node.get("children", {}).items():
+    children = node.get("children", {})
+    for name, item in children.items():
         new_path = f"{path}>{name}" if path != "root" else name
-        
-        # التعديل هنا: فحص المجلدات أولاً لضمان عدم خلطها مع المنتجات
-        if item.get("type") == "folder" or "children" in item:
+        if item.get("type") == "folder":
             kb.append([InlineKeyboardButton(text=f"📁 {name}", callback_data=f"open_{new_path}")])
-        elif "price" in item:
+        else:
             price = item.get('price', 0)
             kb.append([InlineKeyboardButton(text=f"🛒 {name} ({price}$)", callback_data=f"buyprod_{new_path}")])
-        else:
-            kb.append([InlineKeyboardButton(text=f"🛒 {name}", callback_data=f"buyprod_{new_path}")])
             
     if path == "root":
         kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="back_main")])
@@ -220,11 +221,7 @@ async def open_tree_node(call: types.CallbackQuery):
         kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data=f"open_{parent_path}")])
 
     text = "🛍️ أقسام المتجر:" if path == "root" else f"📁 قسم: {path.split('>')[-1]}"
-    
-    if not kb:
-        await call.answer("هذا القسم فارغ حالياً", show_alert=True)
-    else:
-        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("buyprod_"))
 async def start_buy_product(call: types.CallbackQuery, state: FSMContext):
