@@ -82,7 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =====================================================================
-#                          [ 👤 قسم العميل ]
+#                           [ 👤 قسم العميل ]
 # =====================================================================
 
 async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,7 +305,7 @@ async def client_get_prod_info(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # =====================================================================
-#                          [ ⚙️ لوحة التحكم للآدمن ]
+#                  [ ⚙️ لوحة التحكم للآدمن ]
 # =====================================================================
 
 async def admin_panel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -488,7 +488,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
 
 # =====================================================================
-#                     [ استكمال عمليات الإدخال الفنية للآدمن ]
+#                      [ استكمال عمليات الإدخال الفنية للآدمن ]
 # =====================================================================
 
 async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -672,10 +672,11 @@ def main():
     
     # [هنا الإصلاح السحري]: إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_order_reject_|adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu)$"))
 
-    # تشغيل البوت بالكامل
+    # تشغيل البوت واستقبال التحديثات
+    print("🤖 البوت يعمل الآن بنجاح...")
     application.run_polling()
 
 if __name__ == "__main__":
