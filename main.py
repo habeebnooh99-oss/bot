@@ -682,7 +682,7 @@ def main():
     application.add_handler(CommandHandler("add_balance", add_balance_command))
     
     # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
-    application.append_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
+    application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
     application.append_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
     application.append_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
