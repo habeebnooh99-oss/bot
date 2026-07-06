@@ -82,7 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =====================================================================
-#                           [ 👤 قسم العميل ]
+#                          [ 👤 قسم العميل ]
 # =====================================================================
 
 async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,7 +112,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 **معلومات حسابك الشخصي:**\n\n"
             f"🆔 الآيدي الخاص بك: `{user_id}`\n"
             f"📝 الاسم: {u['name']}\n"
-            f"🇯🇴 رصيدك بالدينار: `{u['balance_jod']:.2f} JOD`\n"
+            f"🇬🇧 رصيدك بالدينار: `{u['balance_jod']:.2f} JOD`\n"
             f"💵 رصيدك بالدولار: `{u['balance_usd']:.2f} USD`\n"
             f"📉 نسبة خصمك الخاصة: %{u['discount']}"
         )
@@ -369,8 +369,39 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 await query.edit_message_text("❌ فشل القبول بسبب عدم توفر رصيد كافي فجائي لدى الزبون.")
         
         elif order["type"] == "charge":
-            await query.edit_message_text("💵 **يرجى كتابة وإرسال قيمة الرصيد المراد إضافته للزبون بالدولار ($):**")
-            return ADMIN_WAIT_CHARGE_AMOUNT
+            # [التعديل المطلب]: استبدال الإدخال النصي بلوحة أزرار سريعة من 1$ إلى 200$
+            txt = "💵 **يرجى اختيار قيمة الرصيد المراد شحنها وإضافتها الفورية للزبون ($):**"
+            kbd = [
+                [InlineKeyboardButton("1$", callback_data="fast_charge_1"), InlineKeyboardButton("2$", callback_data="fast_charge_2"), InlineKeyboardButton("5$", callback_data="fast_charge_5")],
+                [InlineKeyboardButton("10$", callback_data="fast_charge_10"), InlineKeyboardButton("20$", callback_data="fast_charge_20"), InlineKeyboardButton("50$", callback_data="fast_charge_50")],
+                [InlineKeyboardButton("100$", callback_data="fast_charge_100"), InlineKeyboardButton("150$", callback_data="fast_charge_150"), InlineKeyboardButton("200$", callback_data="fast_charge_200")]
+            ]
+            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
+            return ConversationHandler.END
+
+    elif data.startswith("fast_charge_"):
+        # [تابع للتعديل]: استقبال ومعالجة زر القيمة الفورية المحددة من الآدمن مباشرة دون الدخول بحوار معلق
+        amount_usd = float(data.split("_")[2])
+        amount_jod = amount_usd * 0.71
+        
+        oid = USER_CONTEXT.get(ADMIN_ID, {}).get("target_order")
+        if not oid or oid not in DB["orders"] or DB["orders"][oid]["status"] != "pending":
+            await query.edit_message_text("⚠️ حدث خطأ أو أن الطلب تم شحنه مسبقاً.")
+            return ConversationHandler.END
+            
+        order = DB["orders"][oid]
+        uid = order["user_id"]
+        
+        DB["users"][uid]["balance_usd"] += amount_usd
+        DB["users"][uid]["balance_jod"] += amount_jod
+        order["status"] = "accepted"
+        
+        await query.edit_message_text(f"✅ تم بنجاح إضافة الرصيد للزبون تلقائياً بقيمة `{amount_usd:.2f} USD` ما يعادل `{amount_jod:.2f} JOD`.")
+        await context.bot.send_message(
+            chat_id=uid,
+            text=f"🎉 **تم إضافة وشحن الرصيد إلى محفظتك بنجاح!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
+        )
+        return ConversationHandler.END
 
     elif data.startswith("adm_order_reject_"):
         oid = int(data.split("_")[3])
@@ -510,7 +541,7 @@ async def adm_get_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def adm_get_prod_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     USER_CONTEXT[ADMIN_ID]["new_prod_desc"] = update.message.text
-    await update.message.reply_text("🇯🇴 **الآن، يرجى إدخال سعر المنتج بالدينار الأردني (رقم فقط):**")
+    await update.message.reply_text("🇬🇧 **الآن، يرجى إدخال سعر المنتج بالدينار الأردني (رقم فقط):**")
     return ADMIN_WAIT_PROD_JOD
 
 async def adm_get_prod_jod(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -670,14 +701,13 @@ def main():
     # إضافة CommandHandler للأمر start بشكل أساسي
     application.add_handler(CommandHandler("start", start))
     
-    # [هنا الإصلاح السحري]: إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_order_reject_|adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu)$"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu|adm_bc_all|adm_bc_user|adm_discounts_menu|fast_charge_|main_menu)"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_profile|client_support|client_orders|client_charge|client_shop|browse_cat_|view_prod_)$"))
 
-    # تشغيل البوت واستقبال التحديثات
-    print("🤖 البوت يعمل الآن بنجاح...")
+    # بدء تشغيل البوت
     application.run_polling()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
