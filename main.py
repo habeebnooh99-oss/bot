@@ -1,4 +1,6 @@
 import logging
+import json
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 # --- البيانات الأساسية والثوابت ---
 TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
 ADMIN_ID = 8529336745  # الآدمن سلمان
+BALANCES_FILE = "balances.txt"
 
 # --- قاعدة البيانات المؤقتة في الذاكرة ---
 DB = {
@@ -28,6 +31,37 @@ DB = {
     "prod_counter": 1,
     "order_counter": 1
 }
+
+# دالة لحفظ الأرصدة في ملف خارجي للاحتفاظ بها عند الريستارت
+def save_balances_to_file():
+    try:
+        with open(BALANCES_FILE, "w") as f:
+            for uid, data in DB["users"].items():
+                f.write(f"{uid}:{data['balance_usd']}\n")
+    except Exception as e:
+        logger.error(f"Error saving balances: {e}")
+
+# دالة لتحميل الأرصدة من الملف عند تشغيل البوت لأول مرة
+def load_balances_from_file():
+    if os.path.exists(BALANCES_FILE):
+        try:
+            with open(BALANCES_FILE, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and ":" in line:
+                        uid_str, bal_str = line.split(":", 1)
+                        uid = int(uid_str)
+                        bal_usd = float(bal_str)
+                        if uid not in DB["users"]:
+                            DB["users"][uid] = {"name": "مستخدم مسجل مسبقاً", "balance_jod": bal_usd * 0.71, "balance_usd": bal_usd, "discount": 0}
+                        else:
+                            DB["users"][uid]["balance_usd"] = bal_usd
+                            DB["users"][uid]["balance_jod"] = bal_usd * 0.71
+        except Exception as e:
+            logger.error(f"Error loading balances: {e}")
+
+# تحميل الأرصدة فوراً عند بدء الملف
+load_balances_from_file()
 
 # --- حالات نظام إدارة الحوار (States) ---
 (
@@ -359,6 +393,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 u["balance_jod"] -= final_jod
                 u["balance_usd"] -= final_usd
                 order["status"] = "accepted"
+                save_balances_to_file() # حفظ فوري للملف بعد الخصم
                 
                 await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم `{oid}` وخصم السعر بنجاح.")
                 await context.bot.send_message(
@@ -459,7 +494,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
     elif data == "adm_list_users":
         txt = "👥 **قائمة العملاء والزبائن المسجلين في البوت حالياً:**\n\n"
         for uid, u in DB["users"].items():
-            txt += f"👤 الاسم: {u['name']} | آيدي الحساب: `{uid}`\n💰 رصيد: `{u['balance_jod']:.2f} JOD` | `% {u['discount']}` خصم\n-----------------------\n"
+            txt += f"👤 الاسم: {u['name']} | آيدي الحساب: `{uid}`\n💰 رصيد: `{u['balance_usd']:.2f} USD` / `{u['balance_jod']:.2f} JOD` | `% {u['discount']}` خصم\n-----------------------\n"
         kbd = [[InlineKeyboardButton("⬅️ رجوع للوحة التحكم", callback_data="admin_panel")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
@@ -488,7 +523,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
 
 # =====================================================================
-#                     [ استكمال عمليات الإدخال الفنية للآدمن ]
+#                    [ استكمال عمليات الإدخال الفنية للآدمن ]
 # =====================================================================
 
 async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -553,11 +588,18 @@ async def adm_get_charge_amount(update: Update, context: ContextTypes.DEFAULT_TY
         order = DB["orders"][oid]
         uid = order["user_id"]
         
+        # التأكد من تهيئة حساب العميل في حال لم يكن موجوداً بالـ DB المؤقتة
+        if uid not in DB["users"]:
+            DB["users"][uid] = {"name": "زبون المتجر", "balance_jod": 0.0, "balance_usd": 0.0, "discount": 0}
+
         DB["users"][uid]["balance_usd"] += amount_usd
         DB["users"][uid]["balance_jod"] += amount_jod
         order["status"] = "accepted"
         
-        await update.message.reply_text(f"✅ تم بنجاح إضافة الرصيد للزبون تلقائياً بقيمة `{amount_usd:.2f} USD` ما يعادل `{amount_jod:.2f} JOD`.")
+        # [الإصلاح السحري]: حفظ فوري للأرصدة في ملف balances.txt على السيرفر
+        save_balances_to_file()
+        
+        await update.message.reply_text(f"✅ تم بنجاح إضافة الرصيد للزبون تلقائياً بقيمة `{amount_usd:.2f} USD` ما يعادل `{amount_jod:.2f} JOD` وتم تحديث ملف balances.txt.")
         await context.bot.send_message(
             chat_id=uid,
             text=f"🎉 **تم إضافة وشحن الرصيد إلى محفظتك بنجاح!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
@@ -670,12 +712,12 @@ def main():
     # إضافة CommandHandler للأمر start بشكل أساسي
     application.add_handler(CommandHandler("start", start))
     
-    # [هنا الإصلاح السحري]: إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern=".*"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
-    # تشغيل البوت بالكامل
+    # بدء تشغيل البوت
     application.run_polling()
 
 if __name__ == "__main__":
