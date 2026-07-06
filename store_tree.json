@@ -1,1 +1,21 @@
-
+{
+    "type": "folder",
+    "children": {
+        "قسم الألعاب": {
+            "type": "folder",
+            "children": {
+                "فري فاير": { "type": "folder", "children": { "مثال: 110 جوهرة": { "type": "product", "price": 2.5 } } },
+                "ببجي": { "type": "folder", "children": { "مثال: 60 شدة": { "type": "product", "price": 1.5 } } },
+                "كلاش اوف كلانس": { "type": "folder", "children": { "مثال: 500 جوهرة": { "type": "product", "price": 3.0 } } },
+                "موبايل ليجندز": { "type": "folder", "children": { "مثال: 50 دايموند": { "type": "product", "price": 2.0 } } },
+                "مواجهة الأبطال": { "type": "folder", "children": { "مثال: عملات": { "type": "product", "price": 2.0 } } },
+                "جواكر": { "type": "folder", "children": { "مثال: 50 ألف": { "type": "product", "price": 1.0 } } },
+                "بلياردو": { "type": "folder", "children": { "مثال: 1 مليون كوينز": { "type": "product", "price": 2.0 } } },
+                "روبلوكس": { "type": "folder", "children": { "مثال: 400 روبوكس": { "type": "product", "price": 5.0 } } },
+                "فيفا موبايل": { "type": "folder", "children": { "مثال: نقاط فيفا": { "type": "product", "price": 4.0 } } },
+                "يلا لودو": { "type": "folder", "children": { "مثال: ذهب": { "type": "product", "price": 2.0 } } },
+                "كلاش رويال": { "type": "folder", "children": { "مثال: 500 جوهرة": { "type": "product", "price": 3.0 } } }
+            }
+        }
+    }
+}
