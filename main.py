@@ -15,7 +15,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # --- البيانات الأساسية والثوابت ---
-TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"  # ⚠️ يرجى تغيير هذا التوكن فوراً من BotFather للأمان!
+TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
 ADMIN_ID = 8529336745  # الآدمن سلمان
 
 # --- قاعدة البيانات المؤقتة في الذاكرة ---
@@ -305,7 +305,7 @@ async def client_get_prod_info(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # =====================================================================
-#                  [ ⚙️ لوحة التحكم للآدمن ]
+#                          [ ⚙️ لوحة التحكم للآدمن ]
 # =====================================================================
 
 async def admin_panel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -464,7 +464,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
     elif data == "adm_broadcast_menu":
-        txt = "📢 **قسم إرسال الإعلانات والرسائل الترويجية:**\n\nيرجى تحديد فئة الاستشاف المرادة:"
+        txt = "📢 **قسم إرسال الإعلانات والرسائل الترويجية:**\n\nيرجى تحديد فئة الاستهداف المرادة:"
         kbd = [
             [InlineKeyboardButton("🌍 إرسال إعلان شامل للكل", callback_data="adm_bc_all")],
             [InlineKeyboardButton("👤 إرسال إعلان لشخص معين", callback_data="adm_bc_user")],
@@ -488,7 +488,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
 
 # =====================================================================
-#                      [ استكمال عمليات الإدخال الفنية للآدمن ]
+#                     [ استكمال عمليات الإدخال الفنية للآدمن ]
 # =====================================================================
 
 async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -670,12 +670,12 @@ def main():
     # إضافة CommandHandler للأمر start بشكل أساسي
     application.add_handler(CommandHandler("start", start))
     
-    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # [هنا الإصلاح السحري]: إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu|adm_bc_all|adm_bc_user|adm_order_reject_)"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(client_shop|browse_cat_|view_prod_|main_menu|client_profile|client_support|client_orders|client_charge)$"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
-    # تشغيل البوت بسلاسة
+    # تشغيل البوت بالكامل
     application.run_polling()
 
 if __name__ == "__main__":
