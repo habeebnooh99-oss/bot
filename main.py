@@ -683,8 +683,8 @@ def main():
     
     # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.append_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
-    application.append_handler(CallbackQueryHandler(client_handler, pattern=".*"))
+    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
     application.run_polling()
 
