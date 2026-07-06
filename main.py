@@ -99,8 +99,20 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in USER_CONTEXT:
         USER_CONTEXT[user_id] = {"current_cat": None, "current_prod": None}
 
+    # العودة للقائمة الرئيسية
+    if data == "main_menu":
+        USER_CONTEXT[user_id] = {"current_cat": None, "current_prod": None}
+        keyboard = [
+            [InlineKeyboardButton("🏪 المتجر", callback_data="client_shop"), InlineKeyboardButton("👤 حسابي", callback_data="client_profile")],
+            [InlineKeyboardButton("📦 طلباتي", callback_data="client_orders"), InlineKeyboardButton("🔋 شحن الرصيد", callback_data="client_charge")],
+            [InlineKeyboardButton("📞 الدعم الفني", callback_data="client_support")]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
+        await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
     # 1. قسم حسابي
-    if data == "client_profile":
+    elif data == "client_profile":
         u = DB["users"][user_id]
         txt = (
             f"👤 **معلومات حسابك الشخصي:**\n\n"
@@ -160,7 +172,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CLIENT_WAIT_CHARGE_TEXT
 
     # 5. تصفح المتجر (الأقسام والمنتجات)
-    elif data.startswith("client_shop") or data.startswith("browse_cat_"):
+    elif data == "client_shop" or data.startswith("browse_cat_"):
         cat_id = None
         if data.startswith("browse_cat_"):
             cat_id = int(data.split("_")[2])
@@ -172,7 +184,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # جلب المنتجات التابعة للقسم الحالي
         prods = [pid for pid, p in DB["products"].items() if p["cat_id"] == cat_id]
         
-        txt = "🏪 **تصفح أقسام ومنتجات المتجر المتوفرة:**"
+        txt = "🏪 **تصفح أقسام ومنتجات المتجر المتوفرة:**\n\n"
         if cat_id:
             txt = f"📂 القسم الحالي: **{DB['categories'][cat_id]['name']}**\n\nاختر قسماً فرعياً أو منتجاً لمعاينته:"
             
@@ -383,7 +395,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 await query.edit_message_text("❌ فشل القبول بسبب عدم توفر رصيد كافي فجائي لدى الزبون.")
         
         elif order["type"] == "charge":
-            # قبول الشحن: نطلب من الآدمن إدخال قيمة الشحن بالدولار أولاً
+            # قبول الشحن: نطلب من الآدمن إدخل قيمة الشحن بالدولار أولاً
             await query.edit_message_text("💵 **يرجى كتابة وإرسال قيمة الرصيد المراد إضافته للزبون بالدولار ($):**")
             return ADMIN_WAIT_CHARGE_AMOUNT
 
@@ -406,7 +418,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             
         return ConversationHandler.END
 
-    # --- ب) إدارة الأقسام والمنتجات (شجرة لا نهائية) ---
+    # --- ب) إدارة الأقسام والمنتجات ---
     elif data == "adm_manage_shop" or data.startswith("adm_browse_"):
         cat_id = None
         if data.startswith("adm_browse_"):
@@ -432,13 +444,12 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
         # عرض المنتجات مع زر الحذف الخاص بكل منتج
         for pid in prods:
             kbd.append([
-                InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"adm_view_prod_{pid}"),
+                InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
                 InlineKeyboardButton("❌ حذف المنتج", callback_data=f"adm_del_prod_{pid}")
             ])
             
         kbd.append([InlineKeyboardButton("➕ إضافة قسم جديد هنا", callback_data="adm_add_cat")])
-        if cat_id:
-            kbd.append([InlineKeyboardButton("➕ إضافة منتج داخل هذا القسم", callback_data="adm_add_prod")])
+        kbd.append([InlineKeyboardButton("➕ إضافة منتج داخل هذا القسم", callback_data="adm_add_prod")])
             
         # التحكم بالرجوع العكسي
         back_kbd = []
@@ -463,24 +474,19 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
     # عمليات الحذف الفوري للأقسام والمنتجات
     elif data.startswith("adm_del_cat_"):
         cid = int(data.split("_")[3])
-        parent = DB["categories"][cid]["parent"]
-        # مسح القسم من الشجرة
+        parent = DB["categories"][cid]["parent"] if cid in DB["categories"] else None
         DB["categories"].pop(cid, None)
-        # مسح المنتجات المرتبطة به مباشرة لتجنب الأخطاء
         to_del = [pid for pid, p in DB["products"].items() if p["cat_id"] == cid]
         for p_id in to_del: DB["products"].pop(p_id, None)
         
-        await query.edit_message_text("✅ تم حذف القسم وجميع محتوياته المباشرة بنجاح.")
-        # إعادة توجيه للقسم الأب
-        data_next = f"adm_browse_{parent}" if parent else "adm_manage_shop"
-        return await admin_panel_handler(update, context)
+        await query.edit_message_text("✅ تم حذف القسم وجميع محتوياته المباشرة بنجاح. اضغط /start للتحديث.")
+        return ConversationHandler.END
 
     elif data.startswith("adm_del_prod_"):
         pid = int(data.split("_")[3])
-        cat_id = DB["products"][pid]["cat_id"]
         DB["products"].pop(pid, None)
-        await query.edit_message_text("✅ تم حذف المنتج من القسم بنجاح.")
-        return await admin_panel_handler(update, context)
+        await query.edit_message_text("✅ تم حذف المنتج من القسم بنجاح. اضغط /start للتحديث.")
+        return ConversationHandler.END
 
     # --- ج) قائمة الزبائن والعملاء المسجلين بالبوت ---
     elif data == "adm_list_users":
@@ -553,6 +559,7 @@ async def adm_get_prod_jod(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ يرجى إدخال قيمة رقمية صحيحة للسعر (مثال: 5 أو 10.50):")
         return ADMIN_WAIT_PROD_JOD
 
+# [إصلاح وإكمال الدالة المقطوعة تماماً]
 async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price_usd = float(update.message.text)
@@ -574,7 +581,7 @@ async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ يرجى إدخال قيمة رقمية صحيحة للسعر بالدولار:")
         return ADMIN_WAIT_PROD_USD
 
-# إتمام عملية شحن رصيد العميل بالدولار والدينار تلقائياً بناءً على سعر ثابت تقريبي (مثال: 1 دولار = 0.71 دينار أردني لتسهيل العمليتين معاً)
+# إتمام عملية شحن رصيد العميل بالدولار والدينار تلقائياً
 async def adm_get_charge_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount_usd = float(update.message.text)
@@ -702,16 +709,16 @@ def main():
         allow_reentry=True
     )
 
-    # تسجيل المعالجات والروابط البرمجية العامة بالبوت
+    # إضافة الأوامر والموزعات الأساسية للبوت للعمل الحر خارج نظام الحوار
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(start, pattern="^main_menu$"))
+    
+    # ربط دالات الضغط المباشر للأزرار الحرة للتنقل والتصفح السلس للعميل والآدمن
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_manage_shop|adm_browse_|adm_del_cat_|adm_del_prod_|adm_list_users|adm_broadcast_menu)$"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(client_shop|browse_cat_|view_prod_|client_profile|client_orders|client_charge|client_support)$"))
+    application.add_handler(CallbackQueryHandler(client_handler, pattern="^(main_menu|client_shop|browse_cat_|view_prod_|client_profile|client_orders|client_charge|client_support)$"))
 
-    # بدء تشغيل البوت واستقبال البيانات فورا (Polling)
-    print("🚀 البوت شغال الآن بنجاح وتحت المراقبة اليدوية...")
+    print("🚀 تم تشغيل البوت بنجاح تام، وجاهز للاستخدام الآن...")
     application.run_polling()
 
 if __name__ == "__main__":
