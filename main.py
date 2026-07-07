@@ -203,7 +203,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"----------------------------------------\n"
             f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة."
         )
-await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd)), parse_mode="Markdown")
 elif data == "charge_global":
         txt = (
             f"🌍 **الشحن لجميع الدول العربية والأجنبية:**\n\n"
