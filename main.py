@@ -1,3 +1,12 @@
+import os
+from pymongo import MongoClient
+
+# ربط القاعدة
+client = MongoClient(os.getenv("MONGO_URI"))
+db = client["ALEX_STORE"]
+
+# تعريف الجداول
+users_col = db["users"]
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -103,6 +112,12 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "discount": 0
             }
             
+        # تحديث القاعدة و الذاكرة معاً
+        users_col.update_one(
+            {"user_id": target_uid},
+            {"$inc": {"balance_usd": amount_usd, "balance_jod": amount_jod}},
+            upsert=True
+        )
         DB["users"][target_uid]["balance_usd"] += amount_usd
         DB["users"][target_uid]["balance_jod"] += amount_jod
         
@@ -145,14 +160,15 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "client_profile":
-        u = DB["users"][user_id]
+        # قراءة البيانات من القاعدة مباشرة
+        u = users_col.find_one({"user_id": user_id}) or DB["users"].get(user_id, {})
         txt = (
             f"👤 **معلومات حسابك الشخصي:**\n\n"
             f"🆔 الآيدي الخاص بك: `{user_id}`\n"
-            f"📝 الاسم: {u['name']}\n"
-            f"🇯🇴 رصيدك بالدينار: `{u['balance_jod']:.2f} JOD`\n"
-            f"💵 رصيدك بالدولار: `{u['balance_usd']:.2f} USD`\n"
-            f"📉 نسبة خصمك الخاصة: %{u['discount']}"
+            f"📝 الاسم: {u.get('name', 'بلا اسم')}\n"
+            f"🇯🇴 رصيدك بالدينار: `{u.get('balance_jod', 0.0):.2f} JOD`\n"
+            f"💵 رصيدك بالدولار: `{u.get('balance_usd', 0.0):.2f} USD`\n"
+            f"📉 نسبة خصمك الخاصة: %{u.get('discount', 0)}"
         )
         kbd = [[InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
@@ -391,6 +407,12 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             final_usd = p["price_usd"] * (1 - u["discount"]/100)
             
             if u["balance_jod"] >= final_jod:
+                # تحديث القاعدة
+                users_col.update_one(
+                    {"user_id": uid},
+                    {"$inc": {"balance_jod": -final_jod, "balance_usd": -final_usd}}
+                )
+                # تحديث الذاكرة
                 u["balance_jod"] -= final_jod
                 u["balance_usd"] -= final_usd
                 order["status"] = "accepted"
