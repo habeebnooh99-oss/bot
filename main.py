@@ -9,36 +9,6 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-async def export_backup(update, context):
-    chat_id = update.effective_chat.id
-    if str(chat_id) != "8529336745":
-        await update.message.reply_text("❌ هذا الأمر مخصص للإدارة فقط.")
-        return
-    files = ["balances.txt", "products.json", "store_tree.json"]
-    import os
-    for file_name in files:
-        if os.path.exists(file_name):
-            with open(file_name, 'rb') as f:
-                await context.bot.send_document(chat_id=chat_id, document=f, filename=file_name)
-        else:
-            await update.message.reply_text(f"⚠️ الملف {file_name} غير موجود حالياً.")
-
-async def import_backup(update, context):
-    chat_id = update.effective_chat.id
-    if str(chat_id) != "5394238541":
-        await update.message.reply_text("❌ هذا الأمر مخصص للإدارة فقط.")
-        return
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        await update.message.reply_text("❌ يرجى عمل (Reply / رد) على الملف وكتابة الأمر /import")
-        return
-    doc = update.message.reply_to_message.document
-    file_name = doc.file_name
-    if file_name not in ["balances.txt", "products.json", "store_tree.json"]:
-        await update.message.reply_text("❌ هذا الملف ليس من ملفات المتجر المعتمدة.")
-        return
-    telegram_file = await context.bot.get_file(doc.file_id)
-    await telegram_file.download_to_drive(file_name)
-    await update.message.reply_text(f"✅ تم استعادة ملف `{file_name}` بنجاح وتحديث المتجر!")
 # إعدادات تسجيل الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
