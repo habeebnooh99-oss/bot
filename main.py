@@ -702,7 +702,7 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
-application.run_polling()
+    application.run_polling()
 
 if _name_ == "_main_":
  main()
