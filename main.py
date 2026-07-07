@@ -702,6 +702,6 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
 
-
-if __name__ == "__main__":
+    application.run_polling()
+    if __name__ == "__main__":
     main()
