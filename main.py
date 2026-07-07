@@ -256,7 +256,6 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📉 **نسبة الخصم المطبقة:** %{disc}\n"
             f"-----------------------------------------"
         )
-        )
         
         kbd = [
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
