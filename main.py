@@ -114,7 +114,12 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             await context.bot.send_message(
                 chat_id=target_uid,
-                text=f"🎉 **تم شحن وإضافة رصيد إلى حسابك من قبل الإدارة!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
+          text=(
+                    f"🎉 **تم شحن وإضافة رصيد إلى حسابك بنجاح!**\n\n"
+                    f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
+                    f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
+                    f"نشكر ثقتك بمتجرنا 🤍"
+                )
             )
         except Exception as e:
             logger.error(f"Could not send notification to user {target_uid}: {e}")
