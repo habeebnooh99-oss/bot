@@ -110,22 +110,31 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
         
+     
+
         # إرسال إشعار تلقائي للزبون
+
         try:
+
             await context.bot.send_message(
+
                 chat_id=target_uid,
-         
-           text=(
-                    f"🎉 **تم شحن وإضافة رصيد إلى حسابك بنجاح!**\n\n"
-                    f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
-                    f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
-                    f"نشكر ثقتك بمتجرنا 🤍"
-                )  
+
+                text=f"🎉 **تم شحن وإضافة رصيد إلى حسابك من قبل الإدارة!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
+
+            )
+
         except Exception as e:
+
             logger.error(f"Could not send notification to user {target_uid}: {e}")
+
             
+
     except ValueError:
+
         await update.message.reply_text("❌ خطأ! تأكد من أن الآيدي رقم صحيح والمبلغ رقم (مثال: 10 أو 5.5).")
+
+
 
 # =====================================================================
 #                          [ 👤 قسم العميل ]
@@ -243,26 +252,36 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         USER_CONTEXT[user_id]["current_prod"] = pid
         p = DB["products"][pid]
         u = DB["users"][user_id]
-        
-        disc = u["discount"]
+                disc = u["discount"]
+
         final_jod = p["price_jod"] * (1 - disc/100)
+
         final_usd = p["price_usd"] * (1 - disc/100)
+
         
-       txt = (
-            f"📦 **اسم المنتج:** {p['name']}\n"
-            f"-----------------------------------------\n"
-            f"📝 **الوصف:**\n{p['desc']}\n"
-            f"-----------------------------------------\n"
-            f"💵 **السعر بالدولار:** `{final_usd:.2f} USD`\n"
-            f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
-            f"📉 **نسبة الخصم المطبقة:** %{disc}\n"
-            f"-----------------------------------------"
+
+        txt = (
+
+            f"📦 **اسم المنتج:** {p['name']}\n\n"
+
+            f"📝 **الوصف:**\n{p['desc']}\n\n"
+
+            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} USD / {p['price_usd']:.2f} JOD\n"
+
+            f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
+
         )
+
         
+
         kbd = [
+
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
-            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id']}" if p.get('cat_id') else "client_shop")]
+
+            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id'] if p['cat_id'] else ''}")]
+
         ]
+
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
     elif data == "buy_prod_now":
