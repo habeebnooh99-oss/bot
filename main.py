@@ -193,7 +193,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🌍 شحن لباقي الدول (حسب بلدك)", callback_data="charge_global")],
             [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]
         ]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd)
+        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
 
     elif data == "charge_orange":
         txt = (
