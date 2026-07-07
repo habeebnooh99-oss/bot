@@ -9,17 +9,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-def auto_save_to_github(file_name):
-    import os
-    try:
-        os.system(f'git config --global user.name "ALEX STORE Bot"')
-        os.system(f'git config --global user.email "bot@alexstore.com"')
-        os.system(f'git add {file_name}')
-        os.system(f'git commit -m "Auto-update {file_name} from bot"')
-        os.system('git push origin main')
-        print(f"✅ [GitHub] {file_name} saved successfully!")
-    except Exception as e:
-        print(f"❌ [GitHub] Error saving {file_name}: {e}")
+
 # إعدادات تسجيل الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,23 +102,16 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "balance_usd": 0.0,
                 "discount": 0
             }
+            
         DB["users"][target_uid]["balance_usd"] += amount_usd
         DB["users"][target_uid]["balance_jod"] += amount_jod
-        with open("balances.txt", "w", encoding="utf-8") as f:
-                import json; f.write(json.dumps(DB["users"], ensure_ascii=False, indent=4))
-                auto_save_to_github("balances.txt")
+        
         await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
         
         try:
             await context.bot.send_message(
                 chat_id=target_uid,
-  
-            text=(
-                    f"🎉 **تم شحن وإضافة رصيد إلى حسابك بنجاح!**\n\n"
-                    f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
-                    f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
-                    f"نشكر ثقتك بمتجرنا 🤍"
-                )
+                text=f"🎉 **تم شحن وإضافة رصيد إلى حسابك من قبل الإدارة!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
             )
         except Exception as e:
             logger.error(f"Could not send notification to user {target_uid}: {e}")
@@ -201,32 +184,22 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = "🔋 **أقسام وطرق الشحن المتوفرة:**\n\nيرجى اختيار وسيلة الشحن المناسبة لك:"
         kbd = [
             [InlineKeyboardButton("📱 أورنج موني (Orange Money)", callback_data="charge_orange")],
-            [InlineKeyboardButton("🌍 شحن لباقي الدول (حسب بلدك)", callback_data="charge_global")],
             [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]
         ]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
 
     elif data == "charge_orange":
         txt = (
-            f"📱 **تعليمات الشحن عبر محفظة أورنج موني(ممنوع طرف ثالث):**\n\n"
-            f"🔸 **رقم المحفظة المحول إليها:** `0776445110`\n"
-            f"🔸 **اسم صاحب المحفظة:** Salman Nouh Salman Al-Badareen\n"
-            f"-----------------------------------------\n"
-            f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة.**"
+            f"📱 **تعليمات الشحن عبر محفظة أورنج موني:**\n\n"
+            f"🔸 رقم المحفظة المحول إليها: `0776445110`\n"
+            f"🔸 اسم صاحب المحفظة: Salman Noah Salman Al-Badarin\n"
+            f"----------------------------------------\n"
+            f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة."
         )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
+        kbd = [[InlineKeyboardButton("⬅️ رجوع", callback_data="client_charge")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
         return CLIENT_WAIT_CHARGE_TEXT
 
-    elif data == "charge_global":
-        txt = (
-            f"🌍 **الشحن لجميع الدول العربية والأجنبية:**\n\n"
-            f"نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا، فلسطين، مصر، أو أي دولة أخرى).\n\n"
-            f"💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
-            f"👤 **للتواصل المباشر:** @htb1b(تليجرام)"
-        )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
     elif data == "client_shop" or data.startswith("browse_cat_"):
         cat_id = None
         if data.startswith("browse_cat_"):
@@ -245,7 +218,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for scid in subcats:
             kbd.append([InlineKeyboardButton(f"📂 {DB['categories'][scid]['name']}", callback_data=f"browse_cat_{scid}")])
         for pid in prods:
-            kbd.append([InlineKeyboardButton(f"🛒 {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
+            kbd.append([InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
             
         back_kbd = []
         if cat_id:
@@ -268,19 +241,15 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_usd = p["price_usd"] * (1 - disc/100)
         
         txt = (
-            f"📦 **اسم المنتج:** {p['name']}\n"
-            f"-----------------------------------------\n"
-            f"📝 **الوصف:**\n{p['desc']}\n"
-            f"-----------------------------------------\n"
-            f"💵 **السعر بالدولار:** `{final_usd:.2f} USD`\n"
-            f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
-            f"📉 **نسبة الخصم المطبقة:** %{disc}\n"
-            f"-----------------------------------------"
+            f"📦 **اسم المنتج:** {p['name']}\n\n"
+            f"📝 **الوصف:**\n{p['desc']}\n\n"
+            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} JOD / {p['price_usd']:.2f} USD\n"
+            f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
         )
         
         kbd = [
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
-            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id']}" if p.get('cat_id') else "client_shop")]
+            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id'] if p['cat_id'] else ''}")]
         ]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
@@ -425,9 +394,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 u["balance_jod"] -= final_jod
                 u["balance_usd"] -= final_usd
                 order["status"] = "accepted"
-                with open("balances.txt", "w", encoding="utf-8") as f:
-                    import json; f.write(json.dumps(DB["users"], ensure_ascii=False, indent=4))
-                auto_save_to_github("balances.txt")
+                
                 await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم `{oid}` وخصم السعر بنجاح.")
                 await context.bot.send_message(
                     chat_id=uid,
@@ -477,7 +444,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             ])
         for pid in prods:
             kbd.append([
-                InlineKeyboardButton(f"🛒 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
+                InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
                 InlineKeyboardButton("❌ حذف المنتج", callback_data=f"adm_del_prod_{pid}")
             ])
             
@@ -559,9 +526,7 @@ async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     DB["categories"][cid] = {"name": name, "parent": parent, "subcats": [], "products": []}
     DB["cat_counter"] += 1
-    with open("store_tree.json", "w", encoding="utf-8") as f:
-        import json; f.write(json.dumps(DB["categories"], ensure_ascii=False, indent=4))
-    auto_save_to_github("store_tree.json")
+    
     await update.message.reply_text(f"✅ تم إضافة القسم الجديد بنجاح باسم: {name}\nاضغط /start لتحديث الواجهة.")
     return ConversationHandler.END
 
@@ -600,9 +565,7 @@ async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "cat_id": cat_id
         }
         DB["prod_counter"] += 1
-        with open("products.json", "w", encoding="utf-8") as f:
-            json.dump(DB["products"], f, ensure_ascii=False, indent=4)
-        auto_save_to_github("products.json")
+        
         await update.message.reply_text(f"✅ تم إنشاء وحفظ المنتج الإعلاني بنجاح كامل ومتاح للزبائن.\nاضغط /start للتحديث.")
         return ConversationHandler.END
     except ValueError:
@@ -718,9 +681,8 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
-    
 
     application.run_polling()
 
 if __name__ == "__main__":
- main()
+    main()
