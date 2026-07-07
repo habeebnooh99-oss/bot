@@ -224,7 +224,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for scid in subcats:
             kbd.append([InlineKeyboardButton(f"📂 {DB['categories'][scid]['name']}", callback_data=f"browse_cat_{scid}")])
         for pid in prods:
-            kbd.append([InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
+            kbd.append([InlineKeyboardButton(f"🛒 {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
             
         back_kbd = []
         if cat_id:
@@ -454,7 +454,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             ])
         for pid in prods:
             kbd.append([
-                InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
+                InlineKeyboardButton(f"🛒 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
                 InlineKeyboardButton("❌ حذف المنتج", callback_data=f"adm_del_prod_{pid}")
             ])
             
