@@ -600,8 +600,8 @@ async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "cat_id": cat_id
         }
         DB["prod_counter"] += 1
-    with open("products.json", "w", encoding="utf-8") as f:
-            import json; f.write(json.dumps(DB["products"], ensure_ascii=False, indent=4))
+        with open("products.json", "w", encoding="utf-8") as f:
+            json.dump(DB["products"], f, ensure_ascii=False, indent=4)
         auto_save_to_github("products.json")
         await update.message.reply_text(f"✅ تم إنشاء وحفظ المنتج الإعلاني بنجاح كامل ومتاح للزبائن.\nاضغط /start للتحديث.")
         return ConversationHandler.END
