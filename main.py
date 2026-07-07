@@ -120,6 +120,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
                     f"نشكر ثقتك بمتجرنا 🤍"
           )
+            )         
         except Exception as e:
             logger.error(f"Could not send notification to user {target_uid}: {e}")
             
@@ -258,7 +259,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"-----------------------------------------"
         )
         
-        
+        )
         kbd = [
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
             [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id']}" if p.get('cat_id') else "client_shop")]
