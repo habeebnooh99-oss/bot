@@ -247,10 +247,15 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_usd = p["price_usd"] * (1 - disc/100)
         
         txt = (
-            f"📦 **اسم المنتج:** {p['name']}\n\n"
-            f"📝 **الوصف:**\n{p['desc']}\n\n"
-            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} JOD / {p['price_usd']:.2f} USD\n"
-            f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
+            f"📦 **اسم المنتج:** {p['name']}\n"
+            f"-----------------------------------------\n"
+            f"📝 **الوصف:**\n{p['desc']}\n"
+            f"-----------------------------------------\n"
+            f"💵 **السعر بالدولار:** `{final_usd:.2f} USD`\n"
+            f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
+            f"📉 **نسبة الخصم المطبقة:** %{disc}\n"
+            f"-----------------------------------------"
+        )
         )
         
         kbd = [
