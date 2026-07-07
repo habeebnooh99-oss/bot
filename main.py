@@ -506,7 +506,6 @@ async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ تم إضافة القسم: {name} وحفظه في القاعدة!")
     return ConversationHandler.END
     elif data == "adm_add_prod":
-            # هذا الجزء اللي بيطلب اسم المنتج، تأكد إنك لا تحذفه
             await query.edit_message_text("📝 **يرجى إرسال اسم المنتج الجديد:**")
             return ADMIN_WAIT_PROD_NAME
 
