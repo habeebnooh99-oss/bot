@@ -252,7 +252,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         kbd = [
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
-            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id'] if p['cat_id'] else ''}")]
+            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id']}" if p.get('cat_id') else "client_shop")]
         ]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
