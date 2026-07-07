@@ -9,7 +9,6 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-async def export_backup(update, context):
     async def export_backup(update, context):
     chat_id = update.effective_chat.id
     if str(chat_id) != "8529336745":
