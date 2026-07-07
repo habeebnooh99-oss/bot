@@ -71,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
         
     reply_markup = InlineKeyboardMarkup(keyboard)
-    msg_text = f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل 👇:"
+    msg_text = f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:"
     
     if update.callback_query:
         await update.callback_query.answer()
@@ -86,7 +86,6 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.effective_user.id != ADMIN_ID:
         return
     
-    # التحقق من المدخلات (الأمر يحتاج آيدي ومبلغ)
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("⚠️ **طريقة استخدام الأمر غير صحيحة!**\nالرجاء إدخال الأمر كالتالي:\n`/add_balance آيدي_المستخدم المبلغ_بالدولار`\n\nمثال:\n`/add_balance 8529336745 10`", parse_mode="Markdown")
         return
@@ -96,7 +95,6 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         amount_usd = float(context.args[1])
         amount_jod = amount_usd * 0.71
         
-        # التأكد من وجود الزبون في الداتابيز لتجنب الكراش
         if target_uid not in DB["users"]:
             DB["users"][target_uid] = {
                 "name": "مستخدم غير مسجل بالاسم الحالي",
@@ -110,31 +108,21 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
         
-     
-
-        # إرسال إشعار تلقائي للزبون
-
         try:
-
             await context.bot.send_message(
-
                 chat_id=target_uid,
-
-                text=f"🎉 **تم شحن وإضافة رصيد إلى حسابك من قبل الإدارة!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
-
+                text=(
+                    f"🎉 **تم شحن وإضافة رصيد إلى حسابك بنجاح!**\n\n"
+                    f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
+                    f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
+                    f"نشكر ثقتك بمتجرنا 🤍"
+                )
             )
-
         except Exception as e:
-
             logger.error(f"Could not send notification to user {target_uid}: {e}")
-
             
-
     except ValueError:
-
         await update.message.reply_text("❌ خطأ! تأكد من أن الآيدي رقم صحيح والمبلغ رقم (مثال: 10 أو 5.5).")
-
-
 
 # =====================================================================
 #                          [ 👤 قسم العميل ]
@@ -159,7 +147,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         if user_id == ADMIN_ID:
             keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
-        await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل 👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "client_profile":
         u = DB["users"][user_id]
@@ -209,7 +197,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = (
             f"📱 **تعليمات الشحن عبر محفظة أورنج موني:**\n\n"
             f"🔸 رقم المحفظة المحول إليها: `0776445110`\n"
-            f"🔸 اسم صاحب المحفظة: Salman Nouh Salman Al-Badareen\n"
+            f"🔸 اسم صاحب المحفظة: Salman Noah Salman Al-Badarin\n"
             f"----------------------------------------\n"
             f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة."
         )
@@ -235,7 +223,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for scid in subcats:
             kbd.append([InlineKeyboardButton(f"📂 {DB['categories'][scid]['name']}", callback_data=f"browse_cat_{scid}")])
         for pid in prods:
-            kbd.append([InlineKeyboardButton(f" {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
+            kbd.append([InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
             
         back_kbd = []
         if cat_id:
@@ -252,36 +240,27 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         USER_CONTEXT[user_id]["current_prod"] = pid
         p = DB["products"][pid]
         u = DB["users"][user_id]
-                disc = u["discount"]
-
+        
+        disc = u["discount"]
         final_jod = p["price_jod"] * (1 - disc/100)
-
         final_usd = p["price_usd"] * (1 - disc/100)
-
         
-
         txt = (
-
-            f"📦 **اسم المنتج:** {p['name']}\n\n"
-
-            f"📝 **الوصف:**\n{p['desc']}\n\n"
-
-            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} USD / {p['price_usd']:.2f} JOD\n"
-
-            f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
-
+            f"📦 **اسم المنتج:** {p['name']}\n"
+            f"-----------------------------------------\n"
+            f"📝 **الوصف:**\n{p['desc']}\n"
+            f"-----------------------------------------\n"
+            f"💵 **السعر بالدولار:** `{final_usd:.2f} USD`\n"
+            f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
+            f"📉 **نسبة الخصم المطبقة:** `% {disc}`\n"
+            f"-----------------------------------------"
         )
-
+        )
         
-
         kbd = [
-
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
-
-            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id'] if p['cat_id'] else ''}")]
-
+            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id']}" if p.get('cat_id') else "client_shop")]
         ]
-
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
     elif data == "buy_prod_now":
@@ -302,7 +281,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await query.edit_message_text(
             f"📝 **يرجى إرسال المعلومات والبيانات اللازمة المطلوبة لتنفيذ هذا المنتج:**\n"
-            f"(مثال: الآيدي الخاص بك في اللعبة، يوزر ، رقم تواصل ، الإيميل... إلخ)"
+            f"(مثال: الآيدي الخاص بك في اللعبة، الحساب، الإيميل... إلخ)"
         )
         return CLIENT_WAIT_PROD_INFO
 
@@ -324,7 +303,6 @@ async def client_get_charge_text(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.message.reply_text("✅ تم إرسال نص وتفاصيل الحوالة للآدمن بنجاح للتأكيد والمراجعة اليدوية.")
     
-    # [تعديل سلمان]: إشعار الشحن يأتيك بدون أزرار قبول ورفض، وبإمكانك الشحن فوراً بالكوماند
     admin_txt = (
         f"🚨 **طلب شحن رصيد جديد (قيد المراجعة)!**\n\n"
         f"👤 اسم العميل: {user.full_name}\n"
@@ -476,7 +454,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
             ])
         for pid in prods:
             kbd.append([
-                InlineKeyboardButton(f" {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
+                InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
                 InlineKeyboardButton("❌ حذف المنتج", callback_data=f"adm_del_prod_{pid}")
             ])
             
@@ -706,10 +684,10 @@ def main():
     # إضافة CommandHandler للأمر start
     application.add_handler(CommandHandler("start", start))
     
-    # [تعديل سلمان الجديد]: إضافة هاندلر الأمر الخاص بإضافة رصيد للزبائن
+    # إضافة هاندلر الأمر الخاص بإضافة رصيد للزبائن
     application.add_handler(CommandHandler("add_balance", add_balance_command))
     
-    # إضافة الـ Callbacks العامة لكل الأزرار العادية التي لا تحتاج انتظار نصوص
+    # [تم التصليح هنا]: تغيير append_handler إلى add_handler لجميع الأسطر التالية
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
