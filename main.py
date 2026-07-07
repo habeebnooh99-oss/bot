@@ -490,15 +490,15 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
     elif data == "adm_add_cat":
         await query.edit_message_text("📝 **يرجى كتابة وإرسال اسم القسم الجديد المراد إنشاؤه:**")
         return ADMIN_WAIT_CAT_NAME
-        async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text
     parent = USER_CONTEXT.get(ADMIN_ID, {}).get("current_cat")
     
     # 1. جلب رقم جديد للقسم
-    cid = len(DB["categories"]) + 1 # أو الطريقة التي تستخدمها للعداد
+    cid = len(DB["categories"]) + 1 
     
     # 2. حفظ في القاعدة فوراً
-    categories_col.insert_one({"cat_id": cid, "name": name, "parent": parent})
+    categories_col.insert_one({"cat_id": cid, "name": name, "parent": parent, "subcats": [], "products": []})
     
     # 3. تحديث الذاكرة
     DB["categories"][cid] = {"name": name, "parent": parent, "subcats": [], "products": []}
