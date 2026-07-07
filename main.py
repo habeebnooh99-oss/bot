@@ -212,7 +212,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🌍 **الشحن لجميع الدول العربية والأجنبية:**\n\n"
             f"نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا، فلسطين، مصر، أو أي دولة أخرى).\n\n"
             f"💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
-            f"👤 **للتواصل المباشر:** @htb1b"
+            f"👤 **للتواصل المباشر:** @htb1b(تليجرام)"
         )
         kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
