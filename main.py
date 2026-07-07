@@ -193,7 +193,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🌍 شحن لباقي الدول (حسب بلدك)", callback_data="charge_global")],
             [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]
         ]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
+        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd)
 
     elif data == "charge_orange":
         txt = (
@@ -203,6 +203,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"----------------------------------------\n"
             f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة."
         )
+        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_get_charge_text")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
     elif data == "charge_global":
