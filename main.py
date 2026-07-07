@@ -119,8 +119,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
                     f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
                     f"نشكر ثقتك بمتجرنا 🤍"
-                )
-            )
+          )
         except Exception as e:
             logger.error(f"Could not send notification to user {target_uid}: {e}")
             
@@ -249,11 +248,16 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_usd = p["price_usd"] * (1 - disc/100)
         
         txt = (
-            f"📦 **اسم المنتج:** {p['name']}\n\n"
-            f"📝 **الوصف:**\n{p['desc']}\n\n"
-            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} USD / {p['price_usd']:.2f} JOD\n"
-            f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
+            f"📦 **اسم المنتج:** {p['name']}\n"
+            f"-----------------------------------------\n"
+            f"📝 **الوصف:**\n{p['desc']}\n"
+            f"-----------------------------------------\n"
+            f"💵 **السعر بالدولار:** `{final_usd:.2f} USD`\n"
+            f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
+            f"📉 **نسبة الخصم المطبقة:** `% {disc}`\n"
+            f"-----------------------------------------"
         )
+        
         
         kbd = [
             [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
