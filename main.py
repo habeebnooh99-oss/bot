@@ -707,7 +707,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-    async def export_backup(update, context):
+async def export_backup(update, context):
     chat_id = update.effective_chat.id
     if str(chat_id) != "5394238541":
         await update.message.reply_text("❌ هذا الأمر مخصص للإدارة فقط.")
