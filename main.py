@@ -425,7 +425,7 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 u["balance_jod"] -= final_jod
                 u["balance_usd"] -= final_usd
                 order["status"] = "accepted"
-                 with open("balances.txt", "w", encoding="utf-8") as f:
+                with open("balances.txt", "w", encoding="utf-8") as f:
                     import json; f.write(json.dumps(DB["users"], ensure_ascii=False, indent=4))
                 auto_save_to_github("balances.txt")
                 await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم `{oid}` وخصم السعر بنجاح.")
