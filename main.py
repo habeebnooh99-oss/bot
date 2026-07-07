@@ -116,7 +116,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         DB["users"][target_uid]["balance_jod"] += amount_jod
         with open("balances.txt", "w", encoding="utf-8") as f:
                 import json; f.write(json.dumps(DB["users"], ensure_ascii=False, indent=4))
-        auto_save_to_github("balances.txt")ٍ
+                auto_save_to_github("balances.txt")
         await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
         
         try:
