@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 async def export_backup(update, context):
     chat_id = update.effective_chat.id
-    if str(chat_id) != "5394238541":
+    if str(chat_id) != "8529336745":
         await update.message.reply_text("❌ هذا الأمر مخصص للإدارة فقط.")
         return
     files = ["balances.txt", "products.json", "store_tree.json"]
