@@ -112,7 +112,6 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "balance_usd": 0.0,
                 "discount": 0
             }
-            ِ
         DB["users"][target_uid]["balance_usd"] += amount_usd
         DB["users"][target_uid]["balance_jod"] += amount_jod
         with open("balances.txt", "w", encoding="utf-8") as f:
