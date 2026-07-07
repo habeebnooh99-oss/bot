@@ -207,10 +207,10 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
         elif data == "charge_global":
         txt = (
-            "🌍 **الشحن لجميع الدول العربية والأجنبية:**\n\n"
-            "نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا، فلسطين، مصر، أو أي دولة أخرى).\n\n"
-            "💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
-            "👤 **للتواصل المباشر:** @htb1b"
+            f"🌍 **الشحن لجميع الدول العربية والأجنبية:**\n\n"
+            f"نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا، فلسطين، مصر، أو أي دولة أخرى).\n\n"
+            f"💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
+            f"👤 **للتواصل المباشر:** @htb1b"
         )
         kbd = [[InlineKeyboardButton("⬅️ رجوع", callback_data="client_charge")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
