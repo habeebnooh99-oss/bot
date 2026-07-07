@@ -700,8 +700,6 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
     application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
-    application.add_handler(CommandHandler("export", export_backup))
-    application.add_handler(CommandHandler("import", import_backup))
 
 
 if __name__ == "__main__":
