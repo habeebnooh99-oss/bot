@@ -145,7 +145,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         if user_id == ADMIN_ID:
             keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
-        await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل 👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "client_profile":
         u = DB["users"][user_id]
@@ -274,7 +274,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await query.edit_message_text(
             f"📝 **يرجى إرسال المعلومات والبيانات اللازمة المطلوبة لتنفيذ هذا المنتج:**\n"
-            f"(مثال: الآيدي الخاص بك في اللعبة، الحساب، الإيميل... إلخ)"
+            f"(مثال: الآيدي الخاص بك في اللعبة، يوزر ، رقم تواصل ، الإيميل... إلخ)"
         )
         return CLIENT_WAIT_PROD_INFO
 
