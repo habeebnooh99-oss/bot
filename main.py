@@ -205,6 +205,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+        return "CLIENT_WAIT_CHARGE_TEXT"
 
     elif data == "charge_global":
         txt = (
@@ -213,7 +214,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
             f"👤 **للتواصل المباشر:** @htb1b"
         )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_get_charge_text")]]
+        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
     elif data == "client_shop" or data.startswith("browse_cat_"):
         cat_id = None
