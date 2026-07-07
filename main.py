@@ -9,36 +9,17 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-async def export_backup(update, context):
-    chat_id = update.effective_chat.id
-    if str(chat_id) != "8529336745":
-        await update.message.reply_text("❌ هذا الأمر مخصص للإدارة فقط.")
-        return
-    files = ["balances.txt", "products.json", "store_tree.json"]
+def auto_save_to_github(file_name):
     import os
-    for file_name in files:
-        if os.path.exists(file_name):
-            with open(file_name, 'rb') as f:
-                await context.bot.send_document(chat_id=chat_id, document=f, filename=file_name)
-        else:
-            await update.message.reply_text(f"⚠️ الملف {file_name} غير موجود حالياً.")
-
-async def import_backup(update, context):
-    chat_id = update.effective_chat.id
-    if str(chat_id) != "8529336745":
-        await update.message.reply_text("❌ هذا الأمر مخصص للإدارة فقط.")
-        return
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        await update.message.reply_text("❌ يرجى عمل (Reply / رد) على الملف وكتابة الأمر /import")
-        return
-    doc = update.message.reply_to_message.document
-    file_name = doc.file_name
-    if file_name not in ["balances.txt", "products.json", "store_tree.json"]:
-        await update.message.reply_text("❌ هذا الملف ليس من ملفات المتجر المعتمدة.")
-        return
-    telegram_file = await context.bot.get_file(doc.file_id)
-    await telegram_file.download_to_drive(file_name)
-    await update.message.reply_text(f"✅ تم استعادة ملف `{file_name}` بنجاح وتحديث المتجر!")
+    try:
+        os.system(f'git config --global user.name "ALEX STORE Bot"')
+        os.system(f'git config --global user.email "bot@alexstore.com"')
+        os.system(f'git add {file_name}')
+        os.system(f'git commit -m "Auto-update {file_name} from bot"')
+        os.system('git push origin main')
+        print(f"✅ [GitHub] {file_name} saved successfully!")
+    except Exception as e:
+        print(f"❌ [GitHub] Error saving {file_name}: {e}")
 # إعدادات تسجيل الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,7 +115,9 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             
         DB["users"][target_uid]["balance_usd"] += amount_usd
         DB["users"][target_uid]["balance_jod"] += amount_jod
-        
+                with open("balances.txt", "w", encoding="utf-8") as f:
+            import json; f.write(json.dumps(DB["users"], ensure_ascii=False, indent=4))
+        auto_save_to_github("balances.txt")ٍ
         await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
         
         try:
@@ -443,7 +426,9 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 u["balance_jod"] -= final_jod
                 u["balance_usd"] -= final_usd
                 order["status"] = "accepted"
-                
+                                with open("balances.txt", "w", encoding="utf-8") as f:
+                    import json; f.write(json.dumps(DB["users"], ensure_ascii=False, indent=4))
+                auto_save_to_github("balances.txt")
                 await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم `{oid}` وخصم السعر بنجاح.")
                 await context.bot.send_message(
                     chat_id=uid,
@@ -575,7 +560,9 @@ async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     DB["categories"][cid] = {"name": name, "parent": parent, "subcats": [], "products": []}
     DB["cat_counter"] += 1
-    
+    with open("store_tree.json", "w", encoding="utf-8") as f:
+        import json; f.write(json.dumps(DB["categories"], ensure_ascii=False, indent=4))
+    auto_save_to_github("store_tree.json")
     await update.message.reply_text(f"✅ تم إضافة القسم الجديد بنجاح باسم: {name}\nاضغط /start لتحديث الواجهة.")
     return ConversationHandler.END
 
@@ -614,7 +601,9 @@ async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "cat_id": cat_id
         }
         DB["prod_counter"] += 1
-        
+    with open("products.json", "w", encoding="utf-8") as f:
+            import json; f.write(json.dumps(DB["products"], ensure_ascii=False, indent=4))
+        auto_save_to_github("products.json")
         await update.message.reply_text(f"✅ تم إنشاء وحفظ المنتج الإعلاني بنجاح كامل ومتاح للزبائن.\nاضغط /start للتحديث.")
         return ConversationHandler.END
     except ValueError:
