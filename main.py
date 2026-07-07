@@ -71,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
         
     reply_markup = InlineKeyboardMarkup(keyboard)
-    msg_text = f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:"
+    msg_text = f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل 👇:"
     
     if update.callback_query:
         await update.callback_query.answer()
@@ -195,7 +195,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = (
             f"📱 **تعليمات الشحن عبر محفظة أورنج موني:**\n\n"
             f"🔸 رقم المحفظة المحول إليها: `0776445110`\n"
-            f"🔸 اسم صاحب المحفظة: Salman Noah Salman Al-Badarin\n"
+            f"🔸 اسم صاحب المحفظة: Salman Nouh Salman Al-Badareen\n"
             f"----------------------------------------\n"
             f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة."
         )
@@ -246,7 +246,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = (
             f"📦 **اسم المنتج:** {p['name']}\n\n"
             f"📝 **الوصف:**\n{p['desc']}\n\n"
-            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} JOD / {p['price_usd']:.2f} USD\n"
+            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} USD / {p['price_usd']:.2f} JOD\n"
             f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
         )
         
