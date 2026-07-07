@@ -114,13 +114,13 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             await context.bot.send_message(
                 chat_id=target_uid,
-          text=(
+         
+           text=(
                     f"🎉 **تم شحن وإضافة رصيد إلى حسابك بنجاح!**\n\n"
                     f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
                     f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
                     f"نشكر ثقتك بمتجرنا 🤍"
-          )
-             
+                )  
         except Exception as e:
             logger.error(f"Could not send notification to user {target_uid}: {e}")
             
@@ -248,14 +248,14 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_jod = p["price_jod"] * (1 - disc/100)
         final_usd = p["price_usd"] * (1 - disc/100)
         
-        txt = (
+       txt = (
             f"📦 **اسم المنتج:** {p['name']}\n"
             f"-----------------------------------------\n"
             f"📝 **الوصف:**\n{p['desc']}\n"
             f"-----------------------------------------\n"
             f"💵 **السعر بالدولار:** `{final_usd:.2f} USD`\n"
             f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
-            f"📉 **نسبة الخصم المطبقة:** `% {disc}`\n"
+            f"📉 **نسبة الخصم المطبقة:** %{disc}\n"
             f"-----------------------------------------"
         )
         
