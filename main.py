@@ -116,7 +116,6 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"💵 القيمة بالدولار: `{amount_usd:.2f} USD`\n"
                     f"🇯🇴 ما يعادلها بالدينار: `{amount_jod:.2f} JOD`\n\n"
                     f"نشكر ثقتك بمتجرنا 🤍"
-                )
             )
         except Exception as e:
             logger.error(f"Could not send notification to user {target_uid}: {e}")
@@ -254,7 +253,6 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🇯🇴 **السعر بالدينار:** `{final_jod:.2f} JOD`\n"
             f"📉 **نسبة الخصم المطبقة:** `% {disc}`\n"
             f"-----------------------------------------"
-        )
         )
         
         kbd = [
