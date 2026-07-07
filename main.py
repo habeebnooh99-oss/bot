@@ -4,7 +4,11 @@ from pymongo import MongoClient
 # ربط القاعدة
 client = MongoClient(os.getenv("MONGO_URI"))
 db = client["ALEX_STORE"]
-
+# سحب البيانات من القاعدة للذاكرة عند التشغيل
+for p in products_col.find():
+    DB["products"][p["prod_id"]] = p
+for c in categories_col.find():
+    DB["categories"][c["cat_id"]] = c
 # تعريف الجداول
 users_col = db["users"]
 import logging
@@ -486,8 +490,52 @@ async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAUL
     elif data == "adm_add_cat":
         await query.edit_message_text("📝 **يرجى كتابة وإرسال اسم القسم الجديد المراد إنشاؤه:**")
         return ADMIN_WAIT_CAT_NAME
-
+        async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text
+    parent = USER_CONTEXT.get(ADMIN_ID, {}).get("current_cat")
+    
+    # 1. جلب رقم جديد للقسم
+    cid = len(DB["categories"]) + 1 # أو الطريقة التي تستخدمها للعداد
+    
+    # 2. حفظ في القاعدة فوراً
+    categories_col.insert_one({"cat_id": cid, "name": name, "parent": parent})
+    
+    # 3. تحديث الذاكرة
+    DB["categories"][cid] = {"name": name, "parent": parent, "subcats": [], "products": []}
+    
+    await update.message.reply_text(f"✅ تم إضافة القسم: {name} وحفظه في القاعدة!")
+    return ConversationHandler.END
     elif data == "adm_add_prod":
+            # هذا الجزء اللي بيطلب اسم المنتج، تأكد إنك لا تحذفه
+            await query.edit_message_text("📝 **يرجى إرسال اسم المنتج الجديد:**")
+            return ADMIN_WAIT_PROD_NAME
+
+# ابحث عن الدالة اللي بتحفظ السعر (غالباً اسمها adm_get_prod_usd أو قريبة منها)
+# وعدلها لتكون بهذا الشكل:
+
+async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    price_usd = float(update.message.text)
+    ctx = USER_CONTEXT.get(ADMIN_ID, {})
+    pid = DB["prod_counter"]
+    
+    prod_data = {
+        "prod_id": pid,
+        "name": ctx.get("new_prod_name"),
+        "desc": ctx.get("new_prod_desc"),
+        "price_jod": ctx.get("new_prod_jod"),
+        "price_usd": price_usd,
+        "cat_id": ctx.get("new_prod_cat")
+    }
+
+    # هنا الحفظ الحقيقي في القاعدة
+    products_col.insert_one(prod_data)
+    
+    # وهنا الحفظ في الذاكرة عشان البوت يقرأه فوراً
+    DB["products"][pid] = prod_data
+    DB["prod_counter"] += 1
+    
+    await update.message.reply_text("✅ تم حفظ المنتج في القاعدة بنجاح!")
+    return ConversationHandler.END
         await query.edit_message_text("📝 **يرجى إرسال اسم المنتج الجديد:**")
         return ADMIN_WAIT_PROD_NAME
 
