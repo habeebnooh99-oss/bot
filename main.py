@@ -449,8 +449,8 @@ async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return ConversationHandler.END
 
-    order_id = context.user_data.get('manage_order_id')
-    conn = sqlite3.connect('alex_card.db')
+async def receive_deposit_amount_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
     order_id = context.user_data.get('manage_order_id')
     conn = sqlite3.connect('alex_card.db')
     cursor = conn.cursor()
