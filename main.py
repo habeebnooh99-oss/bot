@@ -450,7 +450,9 @@ async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
     
     
-    except: await update.message.reply_text("❌ يرجى إدخال رقم صحيح:"); return WAIT_DEPOSIT_AMOUNT
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إدخال رقم صحيح:")
+        return WAIT_DEPOSIT_AMOUNT
     
     order_id = context.user_data.get('manage_order_id')
     conn = sqlite3.connect('alex_card.db')
