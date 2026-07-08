@@ -442,8 +442,9 @@ async def receive_deposit_amount_admin(update: Update, context: ContextTypes.DEF
         cursor.execute("UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE user_id = ?", (amount_usd, amount_jod, uid))
         cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
         conn.commit()
-        try: await context.bot.send_message(chat_id=uid, text=f"تم اضافه الرصيد بنجاح بقيمة {amount_usd}$")
+        try: await context.bot.send_message(chat_id=uid, text=f"🎉 تم إضافة الرصيد إلى حسابك بنجاح!\n💵 القيمة: {amount_usd}$\n🍊 ما يعادلها: {amount_jod:.2f} د.أ")
         except: pass
+        await update.message.reply_text(f"✅ تم إضافة الرصيد للزبون بنجاح واكتملت الحوالة.\n({amount_usd}$ / {amount_jod:.2f} JOD)")
         await update.message.reply_text("✅ تم إضافة الرصيد للزبون بنجاح واكتملت الحوالة.")
     conn.close()
     return ConversationHandler.END
