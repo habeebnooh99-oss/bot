@@ -302,8 +302,14 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
         conn.close()
         
         discount = user[4]
-        final_jod = prod[2] * (1 - discount/100)
-        final_usd = prod[3] * (1 - discount/100)
+        # هذا الكود هو اللي رح يطبق الربح تلقائياً على كل الأسعار
+# حساب الربح والخصم
+    cursor.execute("SELECT value FROM settings WHERE key = 'profit_margin'")
+    row = cursor.fetchone()
+    margin = row[0] if row else 1.0
+
+    final_jod = (prod[2] * margin) * (1 - discount/100)
+    final_usd = (prod[3] * margin) * (1 - discount/100)
         
         desc_text = f"🛍️ **اسم المنتج:** {prod[0]}\n📝 **الوصف:**\n{prod[1]}\n\n💰 **السعر الأصلي:** {prod[3]}$ / {prod[2]} د.أ\n📉 **سعرك بعد الخصم ({discount}%):** `{final_usd:.2f}$` / `{final_jod:.2f} د.أ`\n\n 🚨 لتأكيد الشراء اضغط الزر في الاسفل(شراء الآن)."
         keyboard = [[InlineKeyboardButton("💳 شراء الآن", callback_data=f"buy_req_{prod_id}")], [InlineKeyboardButton("🔙 رجوع", callback_data=f"u_cat_{prod[4]}")] ]
@@ -701,6 +707,25 @@ async def admin_add_balance_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ لم يتم العثور على هذا الآيدي في قاعدة بيانات البوت!")
         
     conn.close()
+    async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق: هل المستخدم هو أنت؟
+    if update.effective_user.id != ADMIN_ID: 
+        return # يتجاهل الأمر تماماً إذا كتبه أي شخص غيرك
+
+    try:
+        new_margin = float(context.args[0])
+        conn = sqlite3.connect('alex_card.db')
+        cursor = conn.cursor()
+        # نحدث القيمة في جدول الإعدادات
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'profit_margin'", (new_margin,))
+        conn.commit()
+        conn.close()
+        await update.message.reply_text(f"✅ تم تحديث نسبة الربح المخفية إلى: {new_margin}")
+    except:
+        await update.message.reply_text("⚠️ اكتب الأمر هكذا: /set_profit 1.10 (يعني 10% ربح)")
+
+# لا تنسَ إضافة الهاندلر في الأسفل:
+application.add_handler(CommandHandler('set_profit', set_profit))
 
 if __name__ == '__main__':
     main()    
