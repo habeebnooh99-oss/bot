@@ -456,13 +456,21 @@ async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text("✅ تم إرسال صورة الإيصال بنجاح إلى الإدارة. يرجى الانتظار لحين المراجعة.")
 
-    admin_buttons = [[InlineKeyboardButton("✅ قبول", callback_data=f"approve_dep_{order_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"deny_dep_{order_id}")]]
-    
+# تنسيق الرسالة للأدمن مع أمر الشحن الجاهز للنسخ
+    admin_message = (
+        f"🔔 طلب شحن رصيد جديد\n"
+        f"👤 المستخدم: {update.effective_user.first_name}\n"
+        f"🆔 آيدي المستخدم: `{update.effective_user.id}`\n"
+        f"📦 رقم الطلب: `{order_id}`\n\n"
+        f"🔗 أمر الشحن (اضغط للنسخ أدناه):\n"
+        f"`/add_balance {update.effective_user.id} [المبلغ]`"
+    )
+
+    # إرسال الصورة مع النص للأدمن بدون أزرار
     await context.bot.send_photo(
         chat_id=ADMIN_ID,
         photo=photo_file_id,
-        caption=f"🚨 **طلب شحن رصيد جديد (صورة إيصال)!**\n\n👤 المستخدم: `{user_id}`\n📦 رقم الطلب: `{order_id}`\n💬 يوزر العميل: @{update.effective_user.username}",
-        reply_markup=InlineKeyboardMarkup(admin_buttons),
+        caption=admin_message,
         parse_mode="Markdown"
     )
     return ConversationHandler.END
