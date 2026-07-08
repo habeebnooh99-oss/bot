@@ -658,6 +658,7 @@ def main():
     application.add_handler(MessageHandler(filters.Text('📞 الدعم الفني'), support))
     application.add_handler(MessageHandler(filters.Text('⚙️ لوحة الإدمن'), admin_panel))
     application.add_handler(CommandHandler('set_profit', set_profit))
+    application.add_handler(CallbackQueryHandler(buy_req_handler, pattern="^buy_req_"))
     
     # معالج الضغطات العامة والإدخالات
     application.add_handler(input_conv)
@@ -726,6 +727,15 @@ async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ اكتب الأمر هكذا: /set_profit 1.10 (يعني 10% ربح)")
 
 # لا تنسَ إضافة الهاندلر في الأسفل:
+async def buy_req_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    # معالجة الشراء هنا
+    context.user_data['buy_prod_id'] = int(data.split("_")[2])
+    await query.edit_message_text(text="**يرجى كتابة وإرسال المعلومات اللازمة لإتمام طلبك**", parse_mode="Markdown")
+    return WAIT_PRODUCT_INFO
 
 if __name__ == '__main__':
     main()    
