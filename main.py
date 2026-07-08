@@ -645,8 +645,8 @@ def main():
     
     application.run_polling()
 
-if __name__ == '__main__':
-    main()
+        
+    conn.close()
 async def admin_add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -688,3 +688,6 @@ async def admin_add_balance_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ لم يتم العثور على هذا الآيدي في قاعدة بيانات البوت!")
         
     conn.close()
+
+if __name__ == '__main__':
+    main()    
