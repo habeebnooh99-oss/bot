@@ -206,7 +206,7 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
             f"👤 **للتواصل المباشر:** @htb1b"
         )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
+        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_get_charge_text")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
         cat_id = None
         if data.startswith("browse_cat_"):
