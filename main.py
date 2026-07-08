@@ -310,9 +310,8 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
     final_jod = (prod[2] * margin) * (1 - discount/100)
     final_usd = (prod[3] * margin) * (1 - discount/100)
-        
-        desc_text = f"🛍️ **اسم المنتج:** {prod[0]}\n📝 **الوصف:**\n{prod[1]}\n\n💰 **السعر الأصلي:** {prod[3]}$ / {prod[2]} د.أ\n📉 **سعرك بعد الخصم ({discount}%):** `{final_usd:.2f}$` / `{final_jod:.2f} د.أ`\n\n 🚨 لتأكيد الشراء اضغط الزر في الاسفل(شراء الآن)."
-        keyboard = [[InlineKeyboardButton("💳 شراء الآن", callback_data=f"buy_req_{prod_id}")], [InlineKeyboardButton("🔙 رجوع", callback_data=f"u_cat_{prod[4]}")] ]
+    desc_text = f"اسم المنتج: {prod[0]}\nالوصف: {prod[1]}\nالسعر الأصلي: {prod[3]}$ / {prod[2]} د.أ\nسعر بعد الخصم ({discount}%): {final_usd:.2f}$ / {final_jod:.2f} د.أ\n\nلتأكيد الشراء اضغط الزر في الأسفل"
+    keyboard = [[InlineKeyboardButton("شراء الآن", callback_data=f"buy_req_{prod_id}")], [InlineKeyboardButton("رجوع", callback_data=f"u_cat_{prod[4]}")]]
         await query.edit_message_text(desc_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data.startswith("buy_req_"):
         context.user_data['buy_prod_id'] = int(data.split("_")[2])
