@@ -631,6 +631,7 @@ def main():
     
     # المعالجات الأساسية للبوت
     application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('add_balance', admin_add_balance_command))
     application.add_handler(MessageHandler(filters.Text('🛒 المتجر'), store_menu))
     application.add_handler(MessageHandler(filters.Text('👤 حسابي'), my_account))
     application.add_handler(MessageHandler(filters.Text('📦 طلباتي'), my_orders))
@@ -646,3 +647,44 @@ def main():
 
 if __name__ == '__main__':
     main()
+async def admin_add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("❌ طريقة الاستخدام الصحيحة:\n/add_balance [آيدي_المستخدم] [المبلغ_بالدولار]\n\nمثال:\n/add_balance 12345678 10")
+        return
+
+    try:
+        uid = int(context.args[0])
+        amount_usd = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ خطأ: تأكد من كتابة الآيدي والمبلغ كأرقام صحيحة!")
+        return
+
+    amount_jod = amount_usd * 0.71
+
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+    user = cursor.fetchone()
+    
+    if user:
+        cursor.execute("UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE user_id = ?", (amount_usd, amount_jod, uid))
+        conn.commit()
+        
+        try:
+            await context.bot.send_message(
+                chat_id=uid, 
+                text=f"🎉 تم إضافة رصيد إلى حسابك بنجاح!\n💰 المبلغ المضاف: {amount_usd}$ / ما يعادل {amount_jod:.2f} JOD."
+            )
+            user_notified = "وصله الإشعار بنجاح"
+        except:
+            user_notified = "لم يصله الإشعار (بسبب الحظر)"
+            
+        await update.message.reply_text(f"✅ تم شحن الحساب بنجاح!\n👤 الزبون: {uid}\n💵 المبلغ: {amount_usd}$\n🇯🇴 ما يعادل: {amount_jod:.2f} JOD\n🔔 حالة الإشعار: {user_notified}")
+    else:
+        await update.message.reply_text("❌ لم يتم العثور على هذا الآيدي في قاعدة بيانات البوت!")
+        
+    conn.close()
