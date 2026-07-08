@@ -724,7 +724,7 @@ async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         await update.message.reply_text(f"✅ تم تحديث نسبة الربح المخفية إلى: {new_margin}")
     except:
-        await update.message.reply_text("⚠️ اكتب الأمر هكذا: /set_profit 1.10 (يعني 10% ربح)")
+        await update.message.reply_text("⚠️ اكتب الأمر هكذا: /set_profit 1.04 (يعني 4% ربح)")
 
 # لا تنسَ إضافة الهاندلر في الأسفل:
 async def buy_req_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
