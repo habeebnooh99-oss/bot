@@ -448,8 +448,6 @@ async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown"
     )
     return ConversationHandler.END
-    
-      return ConversationHandler.END
 
     order_id = context.user_data.get('manage_order_id')
     conn = sqlite3.connect('alex_card.db')
