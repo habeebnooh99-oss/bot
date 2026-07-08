@@ -162,7 +162,7 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- قائمة شحن الرصيد للزبائن ---
 async def deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")],
+        [InlineKeyboardButton("🇯🇴 محفظة أورنج موني", callback_data="dep_orange")],
         [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
     ]
@@ -274,10 +274,10 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
     
     # 1. شحن رصيد العميل
     if data == "back_to_dep":
-        keyboard = [[InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")], [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]]
+        keyboard = [[InlineKeyboardButton("🇯🇴 محفظة أورنج موني", callback_data="dep_orange")], [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]]
         await query.edit_message_text("💰 **الرجاء اختيار طريقة شحن الرصيد المناسبة لك:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "dep_orange":
-        text = "🍊 **معلومات التحويل عبر أورنج موني:**\n\n📱 رقم المحفظة: `0776445110`\n💼 اسم المحفظة: `SALMAN NOUH SALMAN AL-BADAREEN`\n\n⚠️ **الخطوة التالية:** يرجى تصوير إيصال التحويل (لقطة شاشة/Screenshot) وإرسال الصورة هنا لتأكيد طلبك 👇"
+        text = "🇯🇴 **معلومات التحويل عبر أورنج موني:**\n\n📱 رقم المحفظة: `0776445110`\n💼 اسم المحفظة: `SALMAN NOUH SALMAN AL-BADAREEN`\n\n⚠️ **الخطوة التالية:** يرجى تصوير إيصال التحويل (لقطة شاشة/Screenshot) وإرسال الصورة هنا لتأكيد طلبك 👇"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
         return WAIT_DEPOSIT_PROOF
     elif data == "dep_global":
@@ -305,7 +305,7 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
         final_jod = prod[2] * (1 - discount/100)
         final_usd = prod[3] * (1 - discount/100)
         
-        desc_text = f"🛍️ **اسم المنتج:** {prod[0]}\n📝 **الوصف:**\n{prod[1]}\n\n💰 **السعر الأصلي:** {prod[3]}$ / {prod[2]} د.أ\n📉 **سعرك بعد الخصم ({discount}%):** `{final_usd:.2f}$` / `{final_jod:.2f} د.أ`\n\n⚠️ أرسل المعلومات اللازمة المطلوبة للشراء بالضغط أدناه."
+        desc_text = f"🛍️ **اسم المنتج:** {prod[0]}\n📝 **الوصف:**\n{prod[1]}\n\n💰 **السعر الأصلي:** {prod[3]}$ / {prod[2]} د.أ\n📉 **سعرك بعد الخصم ({discount}%):** `{final_usd:.2f}$` / `{final_jod:.2f} د.أ`\n\n 🚨 لتأكيد الشراء اضغط الزر في الاسفل(شراء الآن)."
         keyboard = [[InlineKeyboardButton("💳 شراء الآن", callback_data=f"buy_req_{prod_id}")], [InlineKeyboardButton("🔙 رجوع", callback_data=f"u_cat_{prod[4]}")] ]
         await query.edit_message_text(desc_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data.startswith("buy_req_"):
@@ -376,7 +376,7 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
                     cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
                     conn.commit()
                     try:
-                            await context.bot.send_message(chat_id=uid, text="🎉 تم قبول طلب الشحن وتحديث رصيدك بنجاح!")
+                            await context.bot.send_message(chat_id=uid, text="🎉 تم قبول طلب الشحن وخصم الرصيد بنجاح وتحديث رصيدك بنجاح!")
                     except:
                         pass
             conn.close()
