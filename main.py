@@ -284,7 +284,7 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
         text = "🌍 **الشحن للدول العربية والأجنبية:**\n\nنوفر طرق دفع متعددة تناسب بلدك.\n📥 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n💬 التواصل مع الإدارة:\nتليجرام : @htb1b"
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
     elif data == "main_menu":
-         await query.edit_message_text("🏠 أهلاً بك في القائمة الرئيسية:", reply_markup=get_main_keyboard())
+         await query.edit_message_text("🏠 أهلاً بك في القائمة الرئيسية:", reply_markup=get_main_keyboard(user_id))
 
     # 2. تصفح العميل للمتجر
     elif data == "u_root":
