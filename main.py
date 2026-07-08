@@ -312,7 +312,7 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
     keyboard = [[InlineKeyboardButton("شراء الآن", callback_data=f"buy_req_{prod_id}")], [InlineKeyboardButton("رجوع", callback_data=f"u_cat_{prod[4]}")]]
     await query.edit_message_text(text=desc_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data.startswith("buy_req_"):
-        context.user_data['buy_prod_id'] = int(data.split("_")[2])
+    context.user_data['buy_prod_id'] = int(data.split("_")[2])
         await query.edit_message_text("📥 **يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لإتمام طلبك:**")
         return WAIT_PRODUCT_INFO
 
