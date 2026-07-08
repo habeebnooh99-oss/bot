@@ -314,7 +314,7 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
     # هنا تبدأ الـ elif الجديدة، مزاحة بـ 4 مسافات فقط
     # تحديث جديد للكود
-    elif data.startswith("buy_req_"):
+    if data.startswith("buy_req_"):
         context.user_data['buy_prod_id'] = int(data.split("_")[2])
         await query.edit_message_text(text="**يرجى كتابة وإرسال المعلومات اللازمة لإتمام طلبك**", parse_mode="Markdown")
         return WAIT_PRODUCT_INFO
