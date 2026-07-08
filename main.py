@@ -208,8 +208,6 @@ async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-
-    elif data == "client_shop" or data.startswith("browse_cat_"):
         cat_id = None
         if data.startswith("browse_cat_"):
             cat_id = int(data.split("_")[2])
