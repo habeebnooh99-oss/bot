@@ -143,7 +143,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conn = sqlite3.connect('alex_card.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT id, type, details FROM orders WHERE user_id = ? AND status = 'pending'", (user_id,))
+    cursor.execute("SELECT id, type, details FROM orders WHERE user_id = ?", (user_id,))
     orders = cursor.fetchall()
     conn.close()
     
