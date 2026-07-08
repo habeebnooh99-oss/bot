@@ -1,695 +1,799 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import sqlite3
+import json
+from telegram import (
+    Update, 
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    ReplyKeyboardMarkup, 
+    KeyboardButton
+)
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
+    Application, 
+    CommandHandler, 
+    MessageHandler, 
+    CallbackQueryHandler, 
+    ContextTypes, 
     filters,
-    ContextTypes,
     ConversationHandler
 )
 
-# إعدادات تسجيل الأخطاء
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- البيانات الأساسية والثوابت ---
+# --- الإعدادات الأساسية ---
 TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
-ADMIN_ID = 8529336745  # الآدمن سلمان
+ADMIN_ID = 8529336745
 
-# --- قاعدة البيانات المؤقتة في الذاكرة ---
-DB = {
-    "users": {},       # {user_id: {"name": str, "balance_jod": 0.0, "balance_usd": 0.0, "discount": 0}}
-    "categories": {},  # {cat_id: {"name": str, "parent": id/None, "subcats": [], "products": []}}
-    "products": {},    # {prod_id: {"name": str, "desc": str, "price_jod": 0.0, "price_usd": 0.0, "cat_id": id}}
-    "orders": {},      # {order_id: {"user_id": id, "type": "buy"/"charge", "status": "pending", "details": str, "prod_id": id/None}}
-    "cat_counter": 1,
-    "prod_counter": 1,
-    "order_counter": 1
-}
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- حالات نظام إدارة الحوار (States) ---
+# --- إعداد قاعدة البيانات ---
+def init_db():
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    
+    # جدول المستخدمين
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        balance_jod REAL DEFAULT 0.0,
+        balance_usd REAL DEFAULT 0.0,
+        discount_pct REAL DEFAULT 0.0
+    )''')
+    
+    # جدول الأقسام
+    cursor.execute('''CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        parent_id INTEGER DEFAULT NULL
+    )''')
+    
+    # جدول المنتجات
+    cursor.execute('''CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        description TEXT,
+        price_jod REAL,
+        price_usd REAL,
+        category_id INTEGER
+    )''')
+    
+    # جدول الطلبات (للشراء والشحن)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        type TEXT, -- 'purchase' or 'deposit'
+        status TEXT DEFAULT 'pending',
+        details TEXT,
+        product_id INTEGER NULL,
+        amount_usd REAL DEFAULT 0.0
+    )''')
+    
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- حالات المحادثات (Conversation States) ---
 (
-    # حالات العميل
-    CLIENT_WAIT_PROD_INFO, CLIENT_WAIT_CHARGE_TEXT,
-    # حالات الآدمن
-    ADMIN_WAIT_CAT_NAME, ADMIN_WAIT_PROD_NAME, ADMIN_WAIT_PROD_DESC, ADMIN_WAIT_PROD_JOD, ADMIN_WAIT_PROD_USD,
-    ADMIN_WAIT_BROADCAST_ALL, ADMIN_WAIT_BROADCAST_USER_ID, ADMIN_WAIT_BROADCAST_USER_MSG,
-    ADMIN_WAIT_DISCOUNT_USER_ID, ADMIN_WAIT_DISCOUNT_PERCENT
-) = range(12)
+    WAIT_PRODUCT_INFO, WAIT_DEPOSIT_PROOF, WAIT_DEPOSIT_AMOUNT,
+    WAIT_ADMIN_BROADCAST, WAIT_ADMIN_PRIVATE_ID, WAIT_ADMIN_PRIVATE_MSG,
+    WAIT_ADMIN_CAT_NAME, WAIT_ADMIN_PROD_NAME, WAIT_ADMIN_PROD_DESC, 
+    WAIT_ADMIN_PROD_JOD, WAIT_ADMIN_PROD_USD, WAIT_ADMIN_DISCOUNT_ID, WAIT_ADMIN_DISCOUNT_PCT
+) = range(13)
 
-# سياق التنقل للآدمن والعميل لحفظ مؤشرات الأقسام
-USER_CONTEXT = {} # {user_id: {"current_cat": id, "current_prod": id, "target_user": id, "target_order": id}}
-
-# --- دالة التحقق وإنشاء حساب العميل الجديد ---
-def check_user(user):
-    uid = user.id
-    if uid not in DB["users"]:
-        DB["users"][uid] = {
-            "name": user.full_name or "بلا اسم",
-            "balance_jod": 0.0,
-            "balance_usd": 0.0,
-            "discount": 0
-        }
+# --- لوحات المفاتيح الرئيسية ---
+def get_main_keyboard(user_id):
+    if user_id == ADMIN_ID:
+        return ReplyKeyboardMarkup([
+            ['🛒 المتجر', '👤 حسابي'],
+            ['📦 طلباتي', '💰 شحن الرصيد'],
+            ['📞 الدعم الفني', '⚙️ لوحة الإدمن']
+        ], resize_keyboard=True)
     else:
-        DB["users"][uid]["name"] = user.full_name or DB["users"][uid]["name"]
+        return ReplyKeyboardMarkup([
+            ['🛒 المتجر', '👤 حسابي'],
+            ['📦 طلباتي', '💰 شحن الرصيد'],
+            ['📞 الدعم الفني']
+        ], resize_keyboard=True)
 
-# --- لوحة التحكم الرئيسية للعميل والآدمن ---
+# --- دالة مساعدة لجلب بيانات المستخدم أو إنشائه ---
+def get_or_create_user(user_id, username):
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username, balance_jod, balance_usd, discount_pct FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        username_str = f"@{username}" if username else "بلا يوزر"
+        cursor.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username_str))
+        conn.commit()
+        cursor.execute("SELECT user_id, username, balance_jod, balance_usd, discount_pct FROM users WHERE user_id = ?", (user_id,))
+        user = cursor.fetchone()
+    conn.close()
+    return user
+
+# --- انطلاق البوت ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    check_user(user)
-    USER_CONTEXT[user.id] = {"current_cat": None, "current_prod": None}
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    get_or_create_user(user_id, username)
     
+    await update.message.reply_text(
+        "✨ أهلاً بك في بوت **ALEX CARD** ✨\nيسعدنا تقديم أفضل الخدمات لك. استخدم الأزرار أدناه للتنقل.",
+        reply_markup=get_main_keyboard(user_id),
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+# --- قسم حسابي ---
+async def my_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = get_or_create_user(user_id, update.effective_user.username)
+    
+    text = (
+        f"👤 **معلومات حسابك الشخصي:**\n\n"
+        f"🆔 الأيدي الخاص بك: `{user[0]}`\n"
+        f"📝 الاسم: {update.effective_user.first_name}\n"
+        f"💰 رصيدك بالدينار: `{user[2]:.2f} JOD`\n"
+        f"💵 رصيدك بالدولار: `{user[3]:.2f} USD`\n"
+        f"📉 نسبة الخصم الخاصة بك: `{user[4]}%`"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# --- قسم طلباتي تحت المراجعة ---
+async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, type, details FROM orders WHERE user_id = ? AND status = 'pending'", (user_id,))
+    orders = cursor.fetchall()
+    conn.close()
+    
+    if not orders:
+        await update.message.reply_text("📦 ليس لديك أي طلبات تحت المراجعة حالياً.")
+        return
+    
+    msg = "📦 **طلباتك القائمة وتحت المراجعة:**\n\n"
+    for order in orders:
+        o_type = "شراء منتج" if order[1] == 'purchase' else "شحن رصيد"
+        msg += f"🔹 **رقم الطلب:** `{order[0]}`\n🔹 **النوع:** {o_type}\n🔹 **التفاصيل:** {order[2]}\n------------------\n"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+# --- قسم الدعم الفني ---
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📞 **قسم الدعم الفني لمساعدتك:**\n\n"
+        "🟢 رقم الواتساب: +962776445110\n"
+        "🔵 التليجرام: @htb1b"
+    )
+    await update.message.reply_text(text)
+
+# --- قسم شحن الرصيد ---
+async def deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🏪 المتجر", callback_data="client_shop"), InlineKeyboardButton("👤 حسابي", callback_data="client_profile")],
-        [InlineKeyboardButton("📦 طلباتي", callback_data="client_orders"), InlineKeyboardButton("🔋 شحن الرصيد", callback_data="client_charge")],
-        [InlineKeyboardButton("📞 الدعم الفني", callback_data="client_support")]
+        [InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")],
+        [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]
     ]
+    await update.message.reply_text("💰 **الرجاء اختيار طريقة شحن الرصيد المناسبة لك:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def deposit_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
-    if user.id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
+    if query.data == "dep_orange":
+        text = (
+            "🍊 **معلومات التحويل عبر أورنج موني:**\n\n"
+            "📱 رقم المحفظة: `0776445110`\n"
+            "💼 اسم المحفظة: `سلمان نوح سلمان البدارين`\n\n"
+            "⚠️ **الخطوة التالية:** يرجى إرسال نص رسالة التحويل بدقة لتأكيد العملية والتحقق من الطلب."
+        )
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
+        return WAIT_DEPOSIT_PROOF
+        
+    elif query.data == "dep_global":
+        text = (
+            "🌍 **الشحن للدول العربية والأجنبية:**\n\n"
+            "نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا أو مصر أو العراق أو أي دولة أخرى).\n\n"
+            "📥 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
+            "💬 التواصل مع الإدارة:\n"
+            "تليجرام : @htb1b"
+        )
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
+    
+    elif query.data == "back_to_dep":
+        keyboard = [
+            [InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")],
+            [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]
+        ]
+        await query.edit_message_text("💰 **الرجاء اختيار طريقة شحن الرصيد المناسبة لك:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return ConversationHandler.END
+
+async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    proof_text = update.message.text
+    
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO orders (user_id, type, details) VALUES (?, 'deposit', ?)", (user_id, proof_text))
+    order_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text("✅ تم إرسال إثبات الشحن إلى الإدارة بنجاح. يرجى الانتظار لحين المراجعة.")
+    
+    # إشعار الإدمن
+    admin_buttons = [
+        [
+            InlineKeyboardButton("✅ قبول", callback_data=f"approve_dep_{order_id}"),
+            InlineKeyboardButton("❌ رفض", callback_data=f"deny_dep_{order_id}")
+        ]
+    ]
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"🚨 **طلب شحن رصيد جديد!**\n\n👤 المستخدم: `{user_id}`\n📦 رقم الطلب: `{order_id}`\n📝 نص الحوالة المرسل:\n\n{proof_text}",
+        reply_markup=InlineKeyboardMarkup(admin_buttons),
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+# --- متجر المنتجات والأقسام المتداخلة شجرياً ---
+async def store_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # البداية من الأقسام الرئيسية (parent_id IS NULL)
+    await send_category_level(update, context, parent_id=None, is_callback=False)
+
+async def send_category_level(update, context, parent_id, is_callback=False):
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    
+    # جلب الأقسام الفرعية
+    if parent_id is None:
+        cursor.execute("SELECT id, name FROM categories WHERE parent_id IS NULL")
+    else:
+        cursor.execute("SELECT id, name FROM categories WHERE parent_id = ?", (parent_id,))
+    categories = cursor.fetchall()
+    
+    # جلب المنتجات في هذا القسم الحالي
+    products = []
+    if parent_id is not None:
+        cursor.execute("SELECT id, name, price_jod, price_usd FROM products WHERE category_id = ?", (parent_id,))
+        products = cursor.fetchall()
+        
+    conn.close()
+    
+    keyboard = []
+    # أزرار الأقسام
+    for cat in categories:
+        keyboard.append([InlineKeyboardButton(f"📁 {cat[1]}", callback_data=f"view_cat_{cat[0]}")])
+    # أزرار المنتجات
+    for prod in products:
+        keyboard.append([InlineKeyboardButton(f"🛍️ {prod[1]} ({prod[3]}$ / {prod[2]}د.أ)", callback_data=f"view_prod_{prod[0]}")])
+        
+    # زر الرجوع للقسم الأعلى
+    if parent_id is not None:
+        conn = sqlite3.connect('alex_card.db')
+        c = conn.cursor()
+        c.execute("SELECT parent_id FROM categories WHERE id = ?", (parent_id,))
+        grand_parent = c.fetchone()
+        conn.close()
+        back_data = f"view_cat_{grand_parent[0]}" if (grand_parent and grand_parent[0]) else "store_root"
+        keyboard.append([InlineKeyboardButton("🔙 رجوع خلف للخلف", callback_data=back_data)])
         
     reply_markup = InlineKeyboardMarkup(keyboard)
-    msg_text = f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:"
+    msg_text = "🛒 **تصفح الأقسام والمنتجات المتاحة لدينا:**"
     
-    if update.callback_query:
-        await update.callback_query.answer()
+    if is_callback:
         await update.callback_query.edit_message_text(msg_text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await update.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+async def store_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+    
+    if data == "store_root":
+        await send_category_level(update, context, parent_id=None, is_callback=True)
+        return ConversationHandler.END
         
+    elif data.startswith("view_cat_"):
+        cat_id = int(data.split("_")[2])
+        await send_category_level(update, context, parent_id=cat_id, is_callback=True)
+        return ConversationHandler.END
+        
+    elif data.startswith("view_prod_"):
+        prod_id = int(data.split("_")[2])
+        user_id = query.from_user.id
+        
+        conn = sqlite3.connect('alex_card.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, description, price_jod, price_usd, category_id FROM products WHERE id = ?", (prod_id,))
+        prod = cursor.fetchone()
+        user = get_or_create_user(user_id, query.from_user.username)
+        conn.close()
+        
+        if not prod:
+            await query.edit_message_text("❌ هذا المنتج لم يعد متوفراً.")
+            return ConversationHandler.END
+            
+        # تطبيق نسبة الخصم الخاصة بالعميل
+        discount = user[4]
+        final_jod = prod[2] * (1 - discount/100)
+        final_usd = prod[3] * (1 - discount/100)
+        
+        desc_text = (
+            f"🛍️ **اسم المنتج:** {prod[0]}\n"
+            f"📝 **الوصف:**\n{prod[1]}\n\n"
+            f"💰 **السعر الأصلي:** {prod[3]}$ / {prod[2]} د.أ\n"
+            f"📉 **سعرك بعد الخصم ({discount}%):** `{final_usd:.2f}$` / `{final_jod:.2f} د.أ`\n\n"
+            f"⚠️ لشراء المنتج، يرجى الضغط على زر الشراء وإرسال المعلومات اللازمة المطلوبة منك."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 شراء الآن", callback_data=f"buy_req_{prod_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"view_cat_{prod[4]}")]
+        ]
+        await query.edit_message_text(desc_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return ConversationHandler.END
+
+    elif data.startswith("buy_req_"):
+        prod_id = int(data.split("_")[2])
+        context.user_data['buy_prod_id'] = prod_id
+        await query.edit_message_text("📥 **يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لإتمام طلبك:**\n(مثال: الحسابات، الأكواد، أو أي تفاصيل مطلوبة)")
+        return WAIT_PRODUCT_INFO
+
+async def receive_product_purchase_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    info_text = update.message.text
+    prod_id = context.user_data.get('buy_prod_id')
+    
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, price_jod, price_usd FROM products WHERE id = ?", (prod_id,))
+    prod = cursor.fetchone()
+    user = get_or_create_user(user_id, update.effective_user.username)
+    
+    if not prod:
+        await update.message.reply_text("❌ حدث خطأ في النظام، المنتج غير موجود.")
+        return ConversationHandler.END
+        
+    discount = user[4]
+    final_jod = prod[1] * (1 - discount/100)
+    final_usd = prod[2] * (1 - discount/100)
+    
+    # التحقق من وجود رصيد كافٍ لدى العميل (بالدولار أو الدينار حسب المتوفر)
+    if user[3] < final_usd and user[2] < final_jod:
+        await update.message.reply_text("❌ رصيدك غير كافي لشراء هذا المنتج. يرجى الشحن أولاً.")
+        return ConversationHandler.END
+        
+    # تسجيل الطلب في قاعدة البيانات تحت المراجعة
+    details = f"المنتج: {prod[0]} | تفاصيل العميل: {info_text}"
+    cursor.execute("INSERT INTO orders (user_id, type, details, product_id, amount_usd) VALUES (?, 'purchase', ?, ?, ?)",
+                   (user_id, details, prod_id, final_usd))
+    order_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text("✅ تم إرسال طلب الشراء الخاص بك إلى الإدارة وهو قيد المراجعة الفورية.")
+    
+    # إخطار لوحة التحكم للإدمن
+    admin_buttons = [
+        [
+            InlineKeyboardButton("✅ قبول البيع", callback_data=f"approve_buy_{order_id}"),
+            InlineKeyboardButton("❌ رفض الطلب", callback_data=f"deny_buy_{order_id}")
+        ]
+    ]
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"🚨 **طلب شراء منتج جديد!**\n\n👤 العميل: `{user_id}`\n📦 رقم الطلب: `{order_id}`\n🛍️ المنتج: {prod[0]}\n💵 السعر الصافي للخصم: {final_usd:.2f}$ / {final_jod:.2f} د.أ\n📝 معلومات العميل المرسلة:\n{info_text}",
+        reply_markup=InlineKeyboardMarkup(admin_buttons),
+        parse_mode="Markdown"
+    )
     return ConversationHandler.END
 
-# --- [أمر إضافة الرصيد الجديد عبر الكوماند للآدمن سلمان] ---
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
+# --- معالجة قرارات الإدمن على الطلبات (شراء أو شحن) ---
+async def admin_decision_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
     
-    if not context.args or len(context.args) < 2:
-        await update.message.reply_text("⚠️ **طريقة استخدام الأمر غير صحيحة!**\nالرجاء إدخال الأمر كالتالي:\n`/add_balance آيدي_المستخدم المبلغ_بالدولار`\n\nمثال:\n`/add_balance 8529336745 10`", parse_mode="Markdown")
-        return
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    
+    # 1. قبول طلب الشحن (نطلب من الادمن الرصيد بالدولار)
+    if data.startswith("approve_dep_"):
+        order_id = int(data.split("_")[2])
+        context.user_data['manage_order_id'] = order_id
+        await query.edit_message_text(f"✍️ الطلب رقم `{order_id}`: يرجى كتابة وإرسال الرصيد المراد إضافته للزبون بالدولار ($):")
+        conn.close()
+        return WAIT_DEPOSIT_AMOUNT
+        
+    # 2. رفض طلب الشحن
+    elif data.startswith("deny_dep_"):
+        order_id = int(data.split("_")[2])
+        cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
+        order = cursor.fetchone()
+        if order:
+            cursor.execute("UPDATE orders SET status = 'denied' WHERE id = ?", (order_id,))
+            conn.commit()
+            try:
+                await context.bot.send_message(chat_id=order[0], text="❌ تم رفض طلب شحن الرصيد، يرجى الاتصال بالدعم الفني.")
+            except: pass
+            await query.edit_message_text(f"❌ تم رفض طلب الشحن رقم {order_id} بنجاح.")
+        conn.close()
+        return ConversationHandler.END
 
+    # 3. قبول طلب شراء منتج خصماً من الرصيد
+    elif data.startswith("approve_buy_"):
+        order_id = int(data.split("_")[3])
+        cursor.execute("SELECT user_id, amount_usd, status FROM orders WHERE id = ?", (order_id,))
+        order = cursor.fetchone()
+        
+        if order and order[2] == 'pending':
+            uid, cost_usd = order[0], order[1]
+            cursor.execute("SELECT balance_usd FROM users WHERE user_id = ?", (uid,))
+            user_bal = cursor.fetchone()
+            
+            if user_bal and user_bal[0] >= cost_usd:
+                # خصم الرصيد وتحديث الطلب
+                cursor.execute("UPDATE users SET balance_usd = balance_usd - ? WHERE user_id = ?", (cost_usd, uid))
+                cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
+                conn.commit()
+                try:
+                    await context.bot.send_message(chat_id=uid, text="🎉 تم قبول طلبك بنجاح! وتم خصم قيمة المنتج من رصيدك الحسابي.")
+                except: pass
+                await query.edit_message_text(f"✅ تم قبول الطلب رقم {order_id} وخصم {cost_usd}$ من رصيد العميل.")
+            else:
+                await query.edit_message_text(f"⚠️ رصيد العميل غير كافي حالياً لإتمام عملية الخصم.")
+        conn.close()
+        return ConversationHandler.END
+        
+    # 4. رفض طلب شراء المنتج
+    elif data.startswith("deny_buy_"):
+        order_id = int(data.split("_")[2])
+        cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
+        order = cursor.fetchone()
+        if order:
+            cursor.execute("UPDATE orders SET status = 'denied' WHERE id = ?", (order_id,))
+            conn.commit()
+            try:
+                await context.bot.send_message(chat_id=order[0], text="❌ تم رفض طلب الشراء الخاص بك. يرجى التواصل مع الإدارة.")
+            except: pass
+            await query.edit_message_text(f"❌ تم رفض طلب الشراء رقم {order_id} وإشعار العميل.")
+        conn.close()
+        return ConversationHandler.END
+
+async def receive_deposit_amount_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    
     try:
-        target_uid = int(context.args[0])
-        amount_usd = float(context.args[1])
+        amount_usd = float(update.message.text)
+    except ValueError:
+        await update.message.reply_text("❌ خطأ، يرجى إدخال قيمة رقمية صحيحة:")
+        return WAIT_DEPOSIT_AMOUNT
+        
+    order_id = context.user_data.get('manage_order_id')
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, status FROM orders WHERE id = ?", (order_id,))
+    order = cursor.fetchone()
+    
+    if order and order[1] == 'pending':
+        uid = order[0]
+        # احتساب القيمة الموازية بالدينار الأردني افتراضياً (سعر الصرف التقريبي 0.71)
         amount_jod = amount_usd * 0.71
         
-        if target_uid not in DB["users"]:
-            DB["users"][target_uid] = {
-                "name": "مستخدم غير مسجل بالاسم الحالي",
-                "balance_jod": 0.0,
-                "balance_usd": 0.0,
-                "discount": 0
-            }
-            
-        DB["users"][target_uid]["balance_usd"] += amount_usd
-        DB["users"][target_uid]["balance_jod"] += amount_jod
-        
-        await update.message.reply_text(f"✅ **تم شحن الحساب بنجاح!**\n👤 الآيدي: `{target_uid}`\n💵 القيمة المضافة: `{amount_usd:.2f} USD`\n🇯🇴 ما يعادلها: `{amount_jod:.2f} JOD`", parse_mode="Markdown")
+        cursor.execute("UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE user_id = ?", (amount_usd, amount_jod, uid))
+        cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
+        conn.commit()
         
         try:
-            await context.bot.send_message(
-                chat_id=target_uid,
-                text=f"🎉 **تم شحن وإضافة رصيد إلى حسابك من قبل الإدارة!**\n💰 القيمة المضافة: `{amount_usd:.2f} USD` / `{amount_jod:.2f} JOD`."
-            )
-        except Exception as e:
-            logger.error(f"Could not send notification to user {target_uid}: {e}")
-            
-    except ValueError:
-        await update.message.reply_text("❌ خطأ! تأكد من أن الآيدي رقم صحيح والمبلغ رقم (مثال: 10 أو 5.5).")
+            await context.bot.send_message(chat_id=uid, text=f"🎉 تم إضافة رصيد لحسابك بنجاح بقيمة: `{amount_usd:.2f}$` ({amount_jod:.2f} د.أ).")
+        except: pass
+        await update.message.reply_text(f"✅ تم إضافة الرصيد بنجاح إلى حساب العميل `{uid}`.")
+    conn.close()
+    return ConversationHandler.END
 
-# =====================================================================
-#                          [ 👤 قسم العميل ]
-# =====================================================================
-
-async def client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = query.from_user.id
-    check_user(query.from_user)
+# --- ⚙️ لوحة الإدمن والتحكم الكامل ---
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
     
-    if user_id not in USER_CONTEXT:
-        USER_CONTEXT[user_id] = {"current_cat": None, "current_prod": None}
+    keyboard = [
+        [InlineKeyboardButton("📁 إدارة المتجر والأقسام", callback_data="admin_store"), InlineKeyboardButton("👥 قائمة الزبائن", callback_data="admin_users")],
+        [InlineKeyboardButton("📢 إرسال إعلان للإعلام", callback_data="admin_broadcast"), InlineKeyboardButton("📉 إدارة الخصومات", callback_data="admin_discounts")]
+    ]
+    await update.message.reply_text("⚙️ **مرحباً بك في لوحة تحكم الإدمن الأساسية للمنصة:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    if data == "main_menu":
-        USER_CONTEXT[user_id] = {"current_cat": None, "current_prod": None}
+async def admin_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    if query.from_user.id != ADMIN_ID: return
+    await query.answer()
+    
+    if data == "admin_panel_main":
         keyboard = [
-            [InlineKeyboardButton("🏪 المتجر", callback_data="client_shop"), InlineKeyboardButton("👤 حسابي", callback_data="client_profile")],
-            [InlineKeyboardButton("📦 طلباتي", callback_data="client_orders"), InlineKeyboardButton("🔋 شحن الرصيد", callback_data="client_charge")],
-            [InlineKeyboardButton("📞 الدعم الفني", callback_data="client_support")]
+            [InlineKeyboardButton("📁 إدارة المتجر والأقسام", callback_data="admin_store"), InlineKeyboardButton("👥 قائمة الزبائن", callback_data="admin_users")],
+            [InlineKeyboardButton("📢 إرسال إعلان للإعلام", callback_data="admin_broadcast"), InlineKeyboardButton("📉 إدارة الخصومات", callback_data="admin_discounts")]
         ]
-        if user_id == ADMIN_ID:
-            keyboard.append([InlineKeyboardButton("⚙️ لوحة التحكم (الآدمن)", callback_data="admin_panel")])
-        await query.edit_message_text(f"👋 أهلاً بك في متجر **ALEX CARD**\nيرجى اختيار أحد الأقسام من الأسفل للتنقل الشامل والمريح👇:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text("⚙️ **مرحباً بك في لوحة تحكم الإدمن الأساسية للمنصة:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return ConversationHandler.END
 
-    elif data == "client_profile":
-        u = DB["users"][user_id]
-        txt = (
-            f"👤 **معلومات حسابك الشخصي:**\n\n"
-            f"🆔 الآيدي الخاص بك: `{user_id}`\n"
-            f"📝 الاسم: {u['name']}\n"
-            f"🇯🇴 رصيدك بالدينار: `{u['balance_jod']:.2f} JOD`\n"
-            f"💵 رصيدك بالدولار: `{u['balance_usd']:.2f} USD`\n"
-            f"📉 نسبة خصمك الخاصة: %{u['discount']}"
-        )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+    # قسم قائمة الزبائن
+    elif data == "admin_users":
+        conn = sqlite3.connect('alex_card.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, balance_usd FROM users")
+        users = cursor.fetchall()
+        conn.close()
+        
+        msg = "👥 **قائمة الزبائن المسجلين بالنظام:**\n\n"
+        for u in users:
+            msg += f"🔹 الاسم واليوزر: {u[1]} | الأيدي: `{u[0]}` | رصيد: `{u[2]}$`\n"
+        
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel_main")]]))
 
-    elif data == "client_support":
-        txt = (
-            f"📞 **قنوات الدعم الفني المباشر لموقع ALEX CARD:**\n\n"
-            f"🟢 رقم الواتساب: +962776445110\n"
-            f"🔵 التليجرام الرسمي: @htb1b\n\n"
-            f"تواصل معنا في أي وقت، نحن هنا لخدمتك!"
-        )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
-
-    elif data == "client_orders":
-        txt = "📦 **طلباتك الحالية القائمة وتحت المراجعة:**\n\n"
-        found = False
-        for oid, o in DB["orders"].items():
-            if o["user_id"] == user_id and o["status"] == "pending":
-                found = True
-                t_type = "شراء منتج" if o["type"] == "buy" else "شحن رصيد"
-                txt += f"🔹 طلب رقم: `{oid}` | النوع: *{t_type}*\n📝 تفاصيل: {o['details']}\n------------------------\n"
-        if not found:
-            txt += "لا توجد لديك أي طلبات تحت المراجعه حالياً."
-        kbd = [[InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-
-    elif data == "client_charge":
-        txt = "🔋 **أقسام وطرق الشحن المتوفرة:**\n\nيرجى اختيار وسيلة الشحن المناسبة لك:"
-        kbd = [
-            [InlineKeyboardButton("📱 أورنج موني (Orange Money)", callback_data="charge_orange")],
-            [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]
+    # قسم الإعلانات
+    elif data == "admin_broadcast":
+        kb = [
+            [InlineKeyboardButton("📢 إرسال للجميع", callback_data="bc_all"), InlineKeyboardButton("👤 إرسال لشخص محدد", callback_data="bc_one")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel_main")]
         ]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
+        await query.edit_message_text("📢 **اختر نوع الإعلان والجمهور المستهدف:**", reply_markup=InlineKeyboardMarkup(kb))
+        
+    elif data == "bc_all":
+        await query.edit_message_text("✍️ أرسل الآن محتوى الرسالة الإعلانية التي تود توجيهها لجميع المستخدمين:")
+        return WAIT_ADMIN_BROADCAST
+        
+    elif data == "bc_one":
+        await query.edit_message_text("✍️ يرجى إدخال (أيدي ID) الشخص المستهدف أولاً:")
+        return WAIT_ADMIN_PRIVATE_ID
 
-    elif data == "charge_orange":
-        txt = (
-            f"📱 **تعليمات الشحن عبر محفظة أورنج موني:**\n\n"
-            f"🔸 **رقم المحفظة المحول إليها:** `0776445110`\n"
-            f"🔸 **اسم صاحب المحفظة:** Salman Noah Salman Al-Badarin\n"
-            f"-----------------------------------------\n"
-            f"⚠️ **مهم جداً:** بعد إتمام عملية التحويل المالي، يرجى كتابة وإرسال نص رسالة التحويل بالكامل (أو كتابة تفاصيل الحوالة) هنا بالأسفل ليتم تدقيقها يدوياً من الإدارة.**"
-        )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_charge")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+    # قسم إدارة الخصومات الشاملة لعميل محدد
+    elif data == "admin_discounts":
+        await query.edit_message_text("📉 **إدارة الخصومات:** يرجى إدخال أيدي (ID) الزبون المراد تخصيص نسبة خصم شاملة له:")
+        return WAIT_ADMIN_DISCOUNT_ID
 
-    elif data == "charge_global":
-        txt = (
-            f"🌍 **الشحن لجميع الدول العربية والأجنبية:**\n\n"
-            f"نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا، فلسطين، مصر، أو أي دولة أخرى).\n\n"
-            f"💬 يرجى التواصل مع الإدارة مباشرة، وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n"
-            f"👤 **للتواصل المباشر:** @htb1b"
-        )
-        kbd = [[InlineKeyboardButton("⬅️ رجوع لخيارات الشحن", callback_data="client_get_charge_text")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-        cat_id = None
-        if data.startswith("browse_cat_"):
-            cat_id = int(data.split("_")[2])
+    # شجرة متجر الإدمن (إضافة/حذف)
+    elif data == "admin_store" or data.startswith("adm_cat_"):
+        cat_id = None if (data == "admin_store" or data == "adm_cat_root") else int(data.split("_")[2])
+        context.user_data['adm_curr_cat'] = cat_id
         
-        USER_CONTEXT[user_id]["current_cat"] = cat_id
+        conn = sqlite3.connect('alex_card.db')
+        cursor = conn.cursor()
+        if cat_id is None:
+            cursor.execute("SELECT id, name FROM categories WHERE parent_id IS NULL")
+        else:
+            cursor.execute("SELECT id, name FROM categories WHERE parent_id = ?", (cat_id,))
+        sub_cats = cursor.fetchall()
         
-        subcats = [cid for cid, c in DB["categories"].items() if c["parent"] == cat_id]
-        prods = [pid for pid, p in DB["products"].items() if p["cat_id"] == cat_id]
+        prods = []
+        if cat_id is not None:
+            cursor.execute("SELECT id, name FROM products WHERE category_id = ?", (cat_id,))
+            prods = cursor.fetchall()
+        conn.close()
         
-        txt = "🏪 **تصفح أقسام ومنتجات المتجر المتوفرة:**\n\n"
-        if cat_id:
-            txt = f"📂 القسم الحالي: **{DB['categories'][cat_id]['name']}**\n\nاختر قسماً فرعياً أو منتجاً لمعاينته:"
+        kb = []
+        # عرض الأقسام المتوفرة للحذف أو الدخول إليها
+        for c in sub_cats:
+            kb.append([
+                InlineKeyboardButton(f"📁 {c[1]}", callback_data=f"adm_cat_{c[0]}"),
+                InlineKeyboardButton("❌ حذف", callback_data=f"del_cat_{c[0]}")
+            ])
+        # عرض المنتجات المتوفرة للحذف
+        for p in prods:
+            kb.append([
+                InlineKeyboardButton(f"🛍️ {p[1]}", callback_data="none"),
+                InlineKeyboardButton("❌ حذف منتج", callback_data=f"del_prod_{p[0]}")
+            ])
             
-        kbd = []
-        for scid in subcats:
-            kbd.append([InlineKeyboardButton(f"📂 {DB['categories'][scid]['name']}", callback_data=f"browse_cat_{scid}")])
-        for pid in prods:
-            kbd.append([InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"view_prod_{pid}")])
+        kb.append([InlineKeyboardButton("➕ إضافة قسم فرعي هنا", callback_data="add_cat")])
+        if cat_id is not None:
+            kb.append([InlineKeyboardButton("➕ إضافة منتج في هذا القسم", callback_data="add_prod")])
             
-        back_kbd = []
-        if cat_id:
-            parent = DB["categories"][cat_id]["parent"]
-            back_data = f"browse_cat_{parent}" if parent else "client_shop"
-            back_kbd.append(InlineKeyboardButton("⬅️ خلف", callback_data=back_data))
-        back_kbd.append(InlineKeyboardButton("🔝 القائمة الرئيسية", callback_data="main_menu"))
-        kbd.append(back_kbd)
-        
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+        # الرجوع الشجري للوراء
+        if cat_id is not None:
+            conn = sqlite3.connect('alex_card.db')
+            c = conn.cursor()
+            c.execute("SELECT parent_id FROM categories WHERE id = ?", (cat_id,))
+            gp = c.fetchone()
+            conn.close()
+            b_data = f"adm_cat_{gp[0]}" if (gp and gp[0]) else "adm_cat_root"
+            kb.append([InlineKeyboardButton("🔙 رجوع للخلف", callback_data=b_data)])
+        else:
+            kb.append([InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="admin_panel_main")])
+            
+        await query.edit_message_text("📁 **إدارة شجرة الأقسام والمنتجات بدون حدود:**", reply_markup=InlineKeyboardMarkup(kb))
 
-    elif data.startswith("view_prod_"):
+    # عمليات الحذف (إكس) للقسم أو المنتج
+    elif data.startswith("del_cat_"):
+        cid = int(data.split("_")[2])
+        conn = sqlite3.connect('alex_card.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM categories WHERE id = ?", (cid,))
+        conn.commit()
+        conn.close()
+        await query.edit_message_text("✅ تم حذف القسم بنجاح.")
+        return ConversationHandler.END
+        
+    elif data.startswith("del_prod_"):
         pid = int(data.split("_")[2])
-        USER_CONTEXT[user_id]["current_prod"] = pid
-        p = DB["products"][pid]
-        u = DB["users"][user_id]
-        
-        disc = u["discount"]
-        final_jod = p["price_jod"] * (1 - disc/100)
-        final_usd = p["price_usd"] * (1 - disc/100)
-        
-        txt = (
-            f"📦 **اسم المنتج:** {p['name']}\n\n"
-            f"📝 **الوصف:**\n{p['desc']}\n\n"
-            f"💰 **السعر الأصلي:** {p['price_jod']:.2f} JOD / {p['price_usd']:.2f} USD\n"
-            f"📉 **سعرك بعد الخصم (%{disc}):** `{final_jod:.2f} JOD` | `{final_usd:.2f} USD`"
-        )
-        
-        kbd = [
-            [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_prod_now")],
-            [InlineKeyboardButton("⬅️ رجوع للأقسام", callback_data=f"browse_cat_{p['cat_id'] if p['cat_id'] else ''}")]
-        ]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-
-    elif data == "buy_prod_now":
-        pid = USER_CONTEXT[user_id]["current_prod"]
-        p = DB["products"][pid]
-        u = DB["users"][user_id]
-        final_jod = p["price_jod"] * (1 - u["discount"]/100)
-        
-        if u["balance_jod"] < final_jod:
-            await query.edit_message_text(
-                f"❌ رصيدك الحالي غير كافي لإتمام هذه العملية!\n\n"
-                f"💵 سعر المنتج: `{final_jod:.2f} JOD` \n"
-                f"💳 رصيدك الحالي: `{u['balance_jod']:.2f} JOD`\n\n"
-                f"يرجى شحن حسابك أولاً بالذهاب إلى قسم الشحن ثم معاودة المحاولة.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع للمنتج", callback_data=f"view_prod_{pid}")]])
-            )
-            return ConversationHandler.END
-            
-        await query.edit_message_text(
-            f"📝 **يرجى إرسال المعلومات والبيانات اللازمة المطلوبة لتنفيذ هذا المنتج:**\n"
-            f"(مثال: الآيدي الخاص بك في اللعبة، الحساب، الإيميل... إلخ)"
-        )
-        return CLIENT_WAIT_PROD_INFO
-
-    return ConversationHandler.END
-
-async def client_get_charge_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    txt = update.message.text
-    
-    oid = DB["order_counter"]
-    DB["orders"][oid] = {
-        "user_id": user.id,
-        "type": "charge",
-        "status": "pending",
-        "details": txt,
-        "prod_id": None
-    }
-    DB["order_counter"] += 1
-    
-    await update.message.reply_text("✅ تم إرسال نص وتفاصيل الحوالة للآدمن بنجاح للتأكيد والمراجعة اليدوية.")
-    
-    admin_txt = (
-        f"🚨 **طلب شحن رصيد جديد (قيد المراجعة)!**\n\n"
-        f"👤 اسم العميل: {user.full_name}\n"
-        f"🆔 آيدي العميل: `{user.id}`\n\n"
-        f"📄 **نص الحوالة المرسل:**\n{txt}\n\n"
-        f"💡 لشحن هذا الزبون انسخ الكوماند وعدل القيمة:\n`/add_balance {user.id} 10`"
-    )
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_txt, parse_mode="Markdown")
-    
-    USER_CONTEXT[user.id] = {"current_cat": None, "current_prod": None}
-    return ConversationHandler.END
-
-async def client_get_prod_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    info_text = update.message.text
-    pid = USER_CONTEXT[user.id]["current_prod"]
-    p = DB["products"][pid]
-    
-    oid = DB["order_counter"]
-    DB["orders"][oid] = {
-        "user_id": user.id,
-        "type": "buy",
-        "status": "pending",
-        "details": f"منتج: {p['name']} | بيانات العميل: {info_text}",
-        "prod_id": pid
-    }
-    DB["order_counter"] += 1
-    
-    await update.message.reply_text("✅ تم إرسال طلب الشراء وبياناتك بنجاح. طلبك الآن تحت المراجعة من الإدارة.")
-    
-    admin_txt = (
-        f"🛒 **طلب شراء منتج جديد!**\n\n"
-        f"👤 العميل: {user.full_name}\n"
-        f"🆔 آيدي العميل: `{user.id}`\n"
-        f"📦 المنتج المطلوب: *{p['name']}*\n\n"
-        f"📝 **المعلومات والبيانات المرفقة:**\n{info_text}"
-    )
-    kbd = [
-        [InlineKeyboardButton("✅ قبول الطلب", callback_data=f"adm_order_accept_{oid}"),
-         InlineKeyboardButton("❌ رفض الطلب", callback_data=f"adm_order_reject_{oid}")]
-    ]
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-    
-    return ConversationHandler.END
-
-
-# =====================================================================
-#                          [ ⚙️ لوحة التحكم للآدمن ]
-# =====================================================================
-
-async def admin_panel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("❌ عذراً، لا تمتلك الصلاحيات الكافية لفتح لوحة الآدمن.")
-        return ConversationHandler.END
-        
-    txt = "⚙️ **مرحباً بك سلمان في لوحة التحكم الإدارية:**\n\nيرجى اختيار القسم المراد إدارته والتحكم به:"
-    kbd = [
-        [InlineKeyboardButton("📂 إدارة المتجر والأقسام", callback_data="adm_manage_shop")],
-        [InlineKeyboardButton("👥 قائمة الزبائن والعملاء", callback_data="adm_list_users")],
-        [InlineKeyboardButton("📢 إرسال إعلان / برودكاست", callback_data="adm_broadcast_menu")],
-        [InlineKeyboardButton("📉 إدارة الخصومات للزبائن", callback_data="adm_discounts_menu")],
-        [InlineKeyboardButton("🔝 القائمة الرئيسية للمستخدم", callback_data="main_menu")]
-    ]
-    await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-    return ConversationHandler.END
-
-async def admin_callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    
-    if query.from_user.id != ADMIN_ID:
+        conn = sqlite3.connect('alex_card.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM products WHERE id = ?", (pid,))
+        conn.commit()
+        conn.close()
+        await query.edit_message_text("✅ تم حذف المنتج بنجاح.")
         return ConversationHandler.END
 
-    if data.startswith("adm_order_accept_"):
-        oid = int(data.split("_")[3])
-        if oid not in DB["orders"] or DB["orders"][oid]["status"] != "pending":
-            await query.edit_message_text("⚠️ هذا الطلب تم معالجته مسبقاً أو غير موجود.")
-            return ConversationHandler.END
-            
-        order = DB["orders"][oid]
-        if ADMIN_ID not in USER_CONTEXT:
-            USER_CONTEXT[ADMIN_ID] = {}
-        USER_CONTEXT[ADMIN_ID]["target_order"] = oid
+    # طلبات الإضافة
+    elif data == "add_cat":
+        await query.edit_message_text("✍️ أدخل اسم القسم الجديد الذي تود إنشائه:")
+        return WAIT_ADMIN_CAT_NAME
         
-        if order["type"] == "buy":
-            pid = order["prod_id"]
-            p = DB["products"][pid]
-            uid = order["user_id"]
-            u = DB["users"][uid]
-            
-            final_jod = p["price_jod"] * (1 - u["discount"]/100)
-            final_usd = p["price_usd"] * (1 - u["discount"]/100)
-            
-            if u["balance_jod"] >= final_jod:
-                u["balance_jod"] -= final_jod
-                u["balance_usd"] -= final_usd
-                order["status"] = "accepted"
-                
-                await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم `{oid}` وخصم السعر بنجاح.")
-                await context.bot.send_message(
-                    chat_id=uid,
-                    text=f"🎉 **تم قبول طلبك لشراء ({p['name']}) بنجاح!**\nتم خصم القيمة من رصيدك، شكراً لتعاملك معنا."
-                )
-            else:
-                await query.edit_message_text("❌ فشل القبول بسبب عدم توفر رصيد كافي فجائي لدى الزبون.")
+    elif data == "add_prod":
+        await query.edit_message_text("✍️ أدخل اسم المنتج الجديد:")
+        return WAIT_ADMIN_PROD_NAME
 
-    elif data.startswith("adm_order_reject_"):
-        oid = int(data.split("_")[3])
-        if oid not in DB["orders"] or DB["orders"][oid]["status"] != "pending":
-            await query.edit_message_text("⚠️ هذا الطلب تم معالجته مسبقاً.")
-            return ConversationHandler.END
-            
-        order = DB["orders"][oid]
-        order["status"] = "rejected"
-        uid = order["user_id"]
+# --- تنفيذ عمليات الاستقبال من الإدمن (إعلانات وخصومات وإضافات للمتجر) ---
+async def receive_admin_broadcast_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    msg_text = update.message.text
+    
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    
+    count = 0
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=u[0], text=f"📢 **إعلان هام من الإدارة:**\n\n{msg_text}")
+            count += 1
+        except: pass
         
-        await query.edit_message_text(f"❌ تم رفض الطلب رقم `{oid}` بنجاح وإشعار المستخدم.")
-        
-        if order["type"] == "buy":
-            await context.bot.send_message(chat_id=uid, text="❌ **تم رفض طلب الشراء الخاص بك.** يرجى التواصل مع الإدارة الفنية لمعرفة السبب.")
-        return ConversationHandler.END
-
-    elif data == "adm_manage_shop" or data.startswith("adm_browse_"):
-        cat_id = None
-        if data.startswith("adm_browse_"):
-            cat_id = int(data.split("_")[2])
-            
-        if ADMIN_ID not in USER_CONTEXT:
-            USER_CONTEXT[ADMIN_ID] = {}
-        USER_CONTEXT[ADMIN_ID]["current_cat"] = cat_id
-        
-        subcats = [cid for cid, c in DB["categories"].items() if c["parent"] == cat_id]
-        prods = [pid for pid, p in DB["products"].items() if p["cat_id"] == cat_id]
-        
-        txt = "📂 **إدارة أقسام المتجر الحالية:**\n\n"
-        if cat_id:
-            txt += f"القسم الحالي المفتوح: **{DB['categories'][cat_id]['name']}**\n\n"
-        txt += "يمكنك إضافة أقسام فرعية أو منتجات داخل القسم المفتوح بلا حدود، أو الحذف بالضغط على زر الحذف الخارجي (❌):"
-        
-        kbd = []
-        for scid in subcats:
-            kbd.append([
-                InlineKeyboardButton(f"📂 {DB['categories'][scid]['name']}", callback_data=f"adm_browse_{scid}"),
-                InlineKeyboardButton("❌ حذف القسم", callback_data=f"adm_del_cat_{scid}")
-            ])
-        for pid in prods:
-            kbd.append([
-                InlineKeyboardButton(f"💎 {DB['products'][pid]['name']}", callback_data=f"adm_noop_{pid}"),
-                InlineKeyboardButton("❌ حذف المنتج", callback_data=f"adm_del_prod_{pid}")
-            ])
-            
-        kbd.append([InlineKeyboardButton("➕ إضافة قسم جديد هنا", callback_data="adm_add_cat")])
-        kbd.append([InlineKeyboardButton("➕ إضافة منتج داخل هذا القسم", callback_data="adm_add_prod")])
-            
-        back_kbd = []
-        if cat_id:
-            parent = DB["categories"][cat_id]["parent"]
-            back_data = f"adm_browse_{parent}" if parent else "adm_manage_shop"
-            back_kbd.append(InlineKeyboardButton("⬅️ خلف", callback_data=back_data))
-        back_kbd.append(InlineKeyboardButton("⚙️ لوحة الآدمن", callback_data="admin_panel"))
-        kbd.append(back_kbd)
-        
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-
-    elif data == "adm_add_cat":
-        await query.edit_message_text("📝 **يرجى كتابة وإرسال اسم القسم الجديد المراد إنشاؤه:**")
-        return ADMIN_WAIT_CAT_NAME
-
-    elif data == "adm_add_prod":
-        await query.edit_message_text("📝 **يرجى إرسال اسم المنتج الجديد:**")
-        return ADMIN_WAIT_PROD_NAME
-
-    elif data.startswith("adm_del_cat_"):
-        cid = int(data.split("_")[3])
-        DB["categories"].pop(cid, None)
-        to_del = [pid for pid, p in DB["products"].items() if p["cat_id"] == cid]
-        for p_id in to_del: DB["products"].pop(p_id, None)
-        
-        await query.edit_message_text("✅ تم حذف القسم وجميع محتوياته المباشرة بنجاح. اضغط /start للتحديث.")
-        return ConversationHandler.END
-
-    elif data.startswith("adm_del_prod_"):
-        pid = int(data.split("_")[3])
-        DB["products"].pop(pid, None)
-        await query.edit_message_text("✅ تم حذف المنتج من القسم بنجاح. اضغط /start للتحديث.")
-        return ConversationHandler.END
-
-    elif data == "adm_list_users":
-        txt = "👥 **قائمة العملاء والزبائن المسجلين في البوت حالياً:**\n\n"
-        for uid, u in DB["users"].items():
-            txt += f"👤 الاسم: {u['name']} | آيدي الحساب: `{uid}`\n💰 رصيد: `{u['balance_jod']:.2f} JOD` | `% {u['discount']}` خصم\n-----------------------\n"
-        kbd = [[InlineKeyboardButton("⬅️ رجوع للوحة التحكم", callback_data="admin_panel")]]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
-
-    elif data == "adm_broadcast_menu":
-        txt = "📢 **قسم إرسال الإعلانات والرسائل الترويجية:**\n\nيرجى تحديد فئة الاستهداف المرادة:"
-        kbd = [
-            [InlineKeyboardButton("🌍 إرسال إعلان شامل للكل", callback_data="adm_bc_all")],
-            [InlineKeyboardButton("👤 إرسال إعلان لشخص معين", callback_data="adm_bc_user")],
-            [InlineKeyboardButton("⬅️ رجوع للوحة التحكم", callback_data="admin_panel")]
-        ]
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kbd))
-
-    elif data == "adm_bc_all":
-        await query.edit_message_text("📢 **يرجى كتابة نص الإعلان العام المراد إرساله لجميع مستخدمين البوت دفعة واحدة:**")
-        return ADMIN_WAIT_BROADCAST_ALL
-
-    elif data == "adm_bc_user":
-        await query.edit_message_text("🆔 **يرجى إرسال آيدي (ID) العميل المستهدف أولاً لتوجيه الرسالة له:**")
-        return ADMIN_WAIT_BROADCAST_USER_ID
-
-    elif data == "adm_discounts_menu":
-        await query.edit_message_text("📉 **إدارة الخصومات الاستثنائية للزبائن:**\n\nيرجى إرسال آيدي (ID) الزبون المراد تعديل خصمه الخاص:")
-        return ADMIN_WAIT_DISCOUNT_USER_ID
-
+    await update.message.reply_text(f"✅ تم إرسال الإعلان الشامل بنجاح إلى {count} مستخدم.")
     return ConversationHandler.END
 
+async def receive_admin_private_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    context.user_data['target_user_id'] = update.message.text
+    await update.message.reply_text("✍️ ممتاز، أرسل الآن نص الرسالة الموجهة له بشكل خاص:")
+    return WAIT_ADMIN_PRIVATE_MSG
 
-# =====================================================================
-#                      [ استكمال عمليات الإدخال الفنية للآدمن ]
-# =====================================================================
-
-async def adm_get_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.message.text
-    parent = USER_CONTEXT.get(ADMIN_ID, {}).get("current_cat")
-    cid = DB["cat_counter"]
+async def receive_admin_private_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    target_id = context.user_data.get('target_user_id')
+    msg_text = update.message.text
     
-    DB["categories"][cid] = {"name": name, "parent": parent, "subcats": [], "products": []}
-    DB["cat_counter"] += 1
-    
-    await update.message.reply_text(f"✅ تم إضافة القسم الجديد بنجاح باسم: {name}\nاضغط /start لتحديث الواجهة.")
-    return ConversationHandler.END
-
-async def adm_get_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if ADMIN_ID not in USER_CONTEXT: USER_CONTEXT[ADMIN_ID] = {}
-    USER_CONTEXT[ADMIN_ID]["new_prod_name"] = update.message.text
-    await update.message.reply_text("📝 **الآن، يرجى إرسال تفاصيل ووصف هذا المنتج:**")
-    return ADMIN_WAIT_PROD_DESC
-
-async def adm_get_prod_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    USER_CONTEXT[ADMIN_ID]["new_prod_desc"] = update.message.text
-    await update.message.reply_text("🇯🇴 **الآن، يرجى إدخال سعر المنتج بالدينار الأردني (رقم فقط):**")
-    return ADMIN_WAIT_PROD_JOD
-
-async def adm_get_prod_jod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        price = float(update.message.text)
-        USER_CONTEXT[ADMIN_ID]["new_prod_jod"] = price
-        await update.message.reply_text("💵 **الآن، يرجى إدخال سعر المنتج بالدولار الأمريكي (رقم فقط):**")
-        return ADMIN_WAIT_PROD_USD
-    except ValueError:
-        await update.message.reply_text("⚠️ يرجى إدخال قيمة رقمية صحيحة للسعر (مثال: 5 أو 10.50):")
-        return ADMIN_WAIT_PROD_JOD
+        await context.bot.send_message(chat_id=int(target_id), text=f"📩 **رسالة خاصة من الإدارة:**\n\n{msg_text}")
+        await update.message.reply_text("✅ تم إرسال الرسالة الخاصة للمستخدم بنجاح دون أخطاء.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ تعذر إرسال الرسالة، تأكد من الأيدي الصحيح. تفاصيل: {e}")
+        
+    return ConversationHandler.END
 
-async def adm_get_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_admin_discount_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    context.user_data['discount_user_id'] = update.message.text
+    await update.message.reply_text("✍️ أرسل الآن نسبة الخصم المئوية المطلوبة (مثال: اكتب 15 لخصم 15%):")
+    return WAIT_ADMIN_DISCOUNT_PCT
+
+async def receive_admin_discount_pct(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    try:
+        pct = float(update.message.text)
+    except:
+        await update.message.reply_text("❌ يرجى إدخال قيمة رقمية صحيحة:")
+        return WAIT_ADMIN_DISCOUNT_PCT
+        
+    uid = context.user_data.get('discount_user_id')
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET discount_pct = ? WHERE user_id = ?", (pct, int(uid)))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(f"📉 تم بنجاح تطبيق نسبة خصم قدرها `{pct}%` على جميع الأسعار للمستخدم `{uid}`.")
+    return ConversationHandler.END
+
+# استقبال متطلبات إضافة الأقسام والمنتجات
+async def receive_admin_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    name = update.message.text
+    parent_id = context.user_data.get('adm_curr_cat')
+    
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO categories (name, parent_id) VALUES (?, ?)", (name, parent_id))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(f"✅ تم إضافة القسم الجديد بنجاح باسم: {name}")
+    return ConversationHandler.END
+
+async def receive_admin_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    context.user_data['new_prod_name'] = update.message.text
+    await update.message.reply_text("✍️ حسناً، أرسل الآن وصف وتفاصيل هذا المنتج بشكل دقيق:")
+    return WAIT_ADMIN_PROD_DESC
+
+async def receive_admin_prod_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    context.user_data['new_prod_desc'] = update.message.text
+    await update.message.reply_text("✍️ أرسل سعر المنتج بالدينار الأردني JOD (مثال: 12.50):")
+    return WAIT_ADMIN_PROD_JOD
+
+async def receive_admin_prod_jod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
+    context.user_data['new_prod_jod'] = update.message.text
+    await update.message.reply_text("✍️ وأخيراً، أرسل سعر المنتج بالدولار الأمريكي USD (مثال: 18.00):")
+    return WAIT_ADMIN_PROD_USD
+
+async def receive_admin_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
     try:
         price_usd = float(update.message.text)
-        pid = DB["prod_counter"]
-        cat_id = USER_CONTEXT.get(ADMIN_ID, {}).get("current_cat")
-        
-        DB["products"][pid] = {
-            "name": USER_CONTEXT[ADMIN_ID]["new_prod_name"],
-            "desc": USER_CONTEXT[ADMIN_ID]["new_prod_desc"],
-            "price_jod": USER_CONTEXT[ADMIN_ID]["new_prod_jod"],
-            "price_usd": price_usd,
-            "cat_id": cat_id
-        }
-        DB["prod_counter"] += 1
-        
-        await update.message.reply_text(f"✅ تم إنشاء وحفظ المنتج الإعلاني بنجاح كامل ومتاح للزبائن.\nاضغط /start للتحديث.")
+        price_jod = float(context.user_data.get('new_prod_jod'))
+    except:
+        await update.message.reply_text("❌ خطأ بالأسعار الرقمية المدخلة، يرجى إعادة الإضافة من جديد.")
         return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("⚠️ يرجى إدخال قيمة رقمية صحيحة للسعر بالدولار:")
-        return ADMIN_WAIT_PROD_USD
-
-async def adm_bc_all_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    count = 0
-    for uid in DB["users"].keys():
-        try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 **إعلان هام من الإدارة:**\n\n{msg}")
-            count += 1
-        except Exception:
-            continue
-    await update.message.reply_text(f"📢 تمت عملية الإرسال الجماعي بنجاح، استلمها {count} عميل حالي.")
+        
+    name = context.user_data.get('new_prod_name')
+    desc = context.user_data.get('new_prod_desc')
+    cat_id = context.user_data.get('adm_curr_cat')
+    
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO products (name, description, price_jod, price_usd, category_id) VALUES (?, ?, ?, ?, ?)",
+                   (name, desc, price_jod, price_usd, cat_id))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(f"✅ تم إضافة منتج ({name}) بنجاح داخل شجرة المتجر الحالية.")
     return ConversationHandler.END
 
-async def adm_bc_user_get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        target_id = int(update.message.text)
-        if target_id not in DB["users"]:
-            await update.message.reply_text("⚠️ هذا المستخدم لم يقم بتسجيل الدخول للبوت من قبل، يرجى التحقق من الآيدي:")
-            return ADMIN_WAIT_BROADCAST_USER_ID
-        if ADMIN_ID not in USER_CONTEXT: USER_CONTEXT[ADMIN_ID] = {}
-        USER_CONTEXT[ADMIN_ID]["target_user"] = target_id
-        await update.message.reply_text("📝 **الآن، أرسل محتوى ومضمون الرسالة الموجهة لهذا العميل:**")
-        return ADMIN_WAIT_BROADCAST_USER_MSG
-    except ValueError:
-        await update.message.reply_text("⚠️ يرجى إدخال آيدي رقمي صحيح:")
-        return ADMIN_WAIT_BROADCAST_USER_ID
-
-async def adm_bc_user_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    target_id = USER_CONTEXT[ADMIN_ID]["target_user"]
-    try:
-        await context.bot.send_message(chat_id=target_id, text=f"📩 **رسالة خاصة من الإدارة:**\n\n{msg}")
-        await update.message.reply_text("✅ تم إرسال الرسالة الخاصة للعميل بنجاح.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ تعذر الإرسال بسبب حظر العميل للبوت أو خطأ تقني: {e}")
-    return ConversationHandler.END
-
-async def adm_discount_get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        target_id = int(update.message.text)
-        if target_id not in DB["users"]:
-            await update.message.reply_text("⚠️ المستخدم غير مسجل، تأكد من الآيدي الصحيح:")
-            return ADMIN_WAIT_DISCOUNT_USER_ID
-        if ADMIN_ID not in USER_CONTEXT: USER_CONTEXT[ADMIN_ID] = {}
-        USER_CONTEXT[ADMIN_ID]["target_user"] = target_id
-        await update.message.reply_text("📉 **الآن، أرسل نسبة الخصم المئوية المطلوبة للزبون (رقم من 0 إلى 100 فقط):**")
-        return ADMIN_WAIT_DISCOUNT_PERCENT
-    except ValueError:
-        await update.message.reply_text("⚠️ يرجى إدخال آيدي رقمي صحيح:")
-        return ADMIN_WAIT_DISCOUNT_USER_ID
-
-async def adm_discount_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        pct = int(update.message.text)
-        if not (0 <= pct <= 100):
-            await update.message.reply_text("⚠️ يجب أن تكون النسبة بين 0 و 100:")
-            return ADMIN_WAIT_DISCOUNT_PERCENT
-            
-        target_id = USER_CONTEXT[ADMIN_ID]["target_user"]
-        DB["users"][target_id]["discount"] = pct
-        await update.message.reply_text(f"📉 تم بنجاح تطبيق خصم دائم بنسبة %{pct} على كافة الأسعار للعميل صاحب الآيدي `{target_id}`.")
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("⚠️ يرجى إدخال رقم صحيح لنسبة الخصم:")
-        return ADMIN_WAIT_DISCOUNT_PERCENT
-
-
-# =====================================================================
-#                          [ نظام التشغيل والربط ]
-# =====================================================================
-
+# --- تشغيل وتطوير التطبيق بالكامل وبدء التشغيل الفعلي ---
 def main():
     application = Application.builder().token(TOKEN).build()
-
+    
+    # محادثات لوحة التحكم والشراء والشحن المعقدة ذات المراحل المتعددة
     conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(client_handler, pattern="^(charge_orange|buy_prod_now)$"),
-            CallbackQueryHandler(admin_callback_dispatcher, pattern="^(adm_order_accept_|adm_add_cat|adm_add_prod|adm_bc_all|adm_bc_user|adm_discounts_menu)$")
+            CallbackQueryHandler(deposit_callbacks, pattern="^(dep_orange|dep_global|back_to_dep)$"),
+            CallbackQueryHandler(store_callbacks, pattern="^(store_root|view_cat_|view_prod_|buy_req_)$"),
+            CallbackQueryHandler(admin_panel_callbacks, pattern="^(admin_panel_main|admin_users|admin_broadcast|bc_all|bc_one|admin_discounts|admin_store|adm_cat_|del_cat_|del_prod_|add_cat|add_prod)$"),
+            CallbackQueryHandler(admin_decision_callbacks, pattern="^(approve_dep_|deny_dep_|approve_buy_|deny_buy_)")
         ],
         states={
-            CLIENT_WAIT_CHARGE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_get_charge_text)],
-            CLIENT_WAIT_PROD_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_get_prod_info)],
-            ADMIN_WAIT_CAT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_cat_name)],
-            ADMIN_WAIT_PROD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_name)],
-            ADMIN_WAIT_PROD_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_desc)],
-            ADMIN_WAIT_PROD_JOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_jod)],
-            ADMIN_WAIT_PROD_USD: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_get_prod_usd)],
-            ADMIN_WAIT_BROADCAST_ALL: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bc_all_send)],
-            ADMIN_WAIT_BROADCAST_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bc_user_get_id)],
-            ADMIN_WAIT_BROADCAST_USER_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bc_user_send)],
-            ADMIN_WAIT_DISCOUNT_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_discount_get_id)],
-            ADMIN_WAIT_DISCOUNT_PERCENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_discount_set)],
+            WAIT_DEPOSIT_PROOF: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deposit_proof)],
+            WAIT_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deposit_amount_admin)],
+            WAIT_PRODUCT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_product_purchase_info)],
+            WAIT_ADMIN_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_broadcast_all)],
+            WAIT_ADMIN_PRIVATE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_private_id)],
+            WAIT_ADMIN_PRIVATE_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_private_msg)],
+            WAIT_ADMIN_DISCOUNT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_discount_id)],
+            WAIT_ADMIN_DISCOUNT_PCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_discount_pct)],
+            WAIT_ADMIN_CAT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_cat_name)],
+            WAIT_ADMIN_PROD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_name)],
+            WAIT_ADMIN_PROD_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_desc)],
+            WAIT_ADMIN_PROD_JOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_jod)],
+            WAIT_ADMIN_PROD_USD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_usd)]
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[CommandHandler('start', start)],
         allow_reentry=True
     )
-
-    # إضافة الـ ConversationHandler أولاً لحفظ ترتيب حالات الإدخال النصية
+    
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(MessageHandler(filters.Text('🛒 المتجر'), store_menu))
+    application.add_handler(MessageHandler(filters.Text('👤 حسابي'), my_account))
+    application.add_handler(MessageHandler(filters.Text('📦 طلباتي'), my_orders))
+    application.add_handler(MessageHandler(filters.Text('💰 شحن الرصيد'), deposit_menu))
+    application.add_handler(MessageHandler(filters.Text('📞 الدعم الفني'), support))
+    application.add_handler(MessageHandler(filters.Text('⚙️ لوحة الإدمن'), admin_panel))
+    
     application.add_handler(conv_handler)
     
-    # إضافة CommandHandler للأمر start
-    application.add_handler(CommandHandler("start", start))
-    
-    # إضافة هاندلر الأمر الخاص بإضافة رصيد للزبائن
-    application.add_handler(CommandHandler("add_balance", add_balance_command))
-    
-    # [تم التصليح هنا]: تغيير append_handler إلى add_handler لجميع الأسطر التالية
-    application.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(admin_callback_dispatcher, pattern="^adm_.*"))
-    application.add_handler(CallbackQueryHandler(client_handler, pattern=".*"))
-
+    # بدء تشغيل البوت عبر الـ Polling المستمر
     application.run_polling()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
