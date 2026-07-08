@@ -656,6 +656,7 @@ def main():
     application.add_handler(MessageHandler(filters.Text('💰 شحن الرصيد'), deposit_menu))
     application.add_handler(MessageHandler(filters.Text('📞 الدعم الفني'), support))
     application.add_handler(MessageHandler(filters.Text('⚙️ لوحة الإدمن'), admin_panel))
+    application.add_handler(CommandHandler('set_profit', set_profit))
     
     # معالج الضغطات العامة والإدخالات
     application.add_handler(input_conv)
@@ -724,7 +725,6 @@ async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ اكتب الأمر هكذا: /set_profit 1.10 (يعني 10% ربح)")
 
 # لا تنسَ إضافة الهاندلر في الأسفل:
-application.add_handler(CommandHandler('set_profit', set_profit))
 
 if __name__ == '__main__':
     main()    
