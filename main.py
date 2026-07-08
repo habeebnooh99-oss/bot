@@ -163,9 +163,11 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")],
-        [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]
+        [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
     ]
-    await update.message.reply_text("💰 **الرجاء اختيار طريقة شحن الرصيد المناسبة لك:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("💰 الرجاء اختيار طريقة شحن الرصيد المناسبة:", reply_markup=reply_markup)
 
 # --- تصفح المتجر للزبائن (شجري بالكامل وبدون قيود) ---
 async def store_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -281,7 +283,8 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
     elif data == "dep_global":
         text = "🌍 **الشحن للدول العربية والأجنبية:**\n\nنوفر طرق دفع متعددة تناسب بلدك.\n📥 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n💬 التواصل مع الإدارة:\nتليجرام : @htb1b"
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
-
+elif data == "main_menu":
+        await query.edit_message_text("🏠 أهلاً بك في القائمة الرئيسية:", reply_markup=get_main_keyboard())
     # 2. تصفح العميل للمتجر
     elif data == "u_root":
         await send_user_category_level(update, context, parent_id=None, is_callback=True)
