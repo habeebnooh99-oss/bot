@@ -706,7 +706,7 @@ async def admin_add_balance_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ لم يتم العثور على هذا الآيدي في قاعدة بيانات البوت!")
         
     conn.close()
-    async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # التحقق: هل المستخدم هو أنت؟
     if update.effective_user.id != ADMIN_ID: 
         return # يتجاهل الأمر تماماً إذا كتبه أي شخص غيرك
