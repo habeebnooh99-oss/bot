@@ -360,20 +360,22 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
             
         # معالجة قرارات طلبات الشحن والشراء من الإدمن
         elif data.startswith("approve_dep_"):
-    order_id = int(data.split("_")[2])
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-    order = cursor.fetchone()
-    if order:
-        uid = order[0]
-        cursor.execute("UPDATE users SET balance_usd = balance_usd + 10 WHERE user_id = ?", (uid,))
-        cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
-        conn.commit()
-        try: await context.bot.send_message(chat_id=uid, text="🎉 تم قبول طلب الشحن وتحديث رصيدك بنجاح!")
-        except: pass
-    conn.close()
-    await query.edit_message_text("✅ تم قبول طلب الشحن بنجاح!")
+            order_id = int(data.split("_")[2])
+            conn = sqlite3.connect('alex_card.db')
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
+            order = cursor.fetchone()
+            if order:
+                    uid = order[0]
+                    cursor.execute("UPDATE users SET balance_usd = balance_usd + 10 WHERE user_id = ?", (uid,))
+                    cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
+                    conn.commit()
+                    try:
+                            await context.bot.send_message(chat_id=uid, text="🎉 تم قبول طلب الشحن وتحديث رصيدك بنجاح!")
+                    except:
+                        pass
+            conn.close()
+            await query.edit_message_text("✅ تم قبول طلب الشحن بنجاح!")
         elif data.startswith("deny_dep_"):
             order_id = int(data.split("_")[2])
             conn = sqlite3.connect('alex_card.db')
