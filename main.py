@@ -190,7 +190,7 @@ async def send_user_category_level(update, context, parent_id, is_callback=False
     for cat in categories:
         keyboard.append([InlineKeyboardButton(f"📁 {cat[1]}", callback_data=f"u_cat_{cat[0]}")])
     for prod in products:
-        keyboard.append([InlineKeyboardButton(f"🛍️ {prod[1]} ({prod[3]}$ / {prod[2]} د.أ)", callback_data=f"u_prod_{prod[0]}")])
+        keyboard.append([InlineKeyboardButton(f"🛒 {prod[1]} ({prod[3]}$ / {prod[2]} د.أ)", callback_data=f"u_prod_{prod[0]}")])
         
     if parent_id is not None:
         conn = sqlite3.connect('alex_card.db')
@@ -275,7 +275,7 @@ async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT
         keyboard = [[InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")], [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]]
         await query.edit_message_text("💰 **الرجاء اختيار طريقة شحن الرصيد المناسبة لك:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "dep_orange":
-        text = "🍊 **معلومات التحويل عبر أورنج موني:**\n\n📱 رقم المحفظة: `0776445110`\n💼 اسم المحفظة: `SALMAN NOUH SALMAN AL-BADAREEN`\n\n⚠️ **الخطوة التالية:** يرجى إرسال نص رسالة التحويل بدقة."
+        text = "🍊 **معلومات التحويل عبر أورنج موني:**\n\n📱 رقم المحفظة: `0776445110`\n💼 اسم المحفظة: `SALMAN NOUH SALMAN AL-BADAREEN`\n\n⚠️ **الخطوة التالية:** يرجى تصوير إيصال التحويل (لقطة شاشة/Screenshot) وإرسال الصورة هنا لتأكيد طلبك 👇"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
         return WAIT_DEPOSIT_PROOF
     elif data == "dep_global":
@@ -422,13 +422,34 @@ async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
     conn.close()
     await update.message.reply_text("✅ تم إرسال إثبات الشحن إلى الإدارة بنجاح.")
     
-    admin_buttons = [[InlineKeyboardButton("✅ قبول", callback_data=f"approve_dep_{order_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"deny_dep_{order_id}")]]
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"🚨 **طلب شحن جديد!**\n👤 الزبون: `{user_id}`\n📝 الرسالة:\n{proof_text}", reply_markup=InlineKeyboardMarkup(admin_buttons), parse_mode="Markdown")
-    return ConversationHandler.END
+    # التأكد أن الزبون أرسل صورة إيصال بالفعل وليس نصاً
+    if not update.message.photo:
+        await update.message.reply_text("❌ عذراً، يرجى إرسال صورة واضحة للإيصال (لقطة شاشة) لتأكيد طلبك:")
+        return WAIT_DEPOSIT_PROOF
 
-async def receive_deposit_amount_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    try: amount_usd = float(update.message.text)
+    photo_file_id = update.message.photo[-1].file_id
+
+    conn = sqlite3.connect('alex_card.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO orders (user_id, type, details) VALUES (?, 'deposit', ?)", (user_id, f"PHOTO_ID:{photo_file_id}"))
+    order_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text("✅ تم إرسال صورة الإيصال بنجاح إلى الإدارة. يرجى الانتظار لحين المراجعة.")
+
+    admin_buttons = [[InlineKeyboardButton("✅ قبول", callback_data=f"approve_dep_{order_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"deny_dep_{order_id}")]]
+    
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=photo_file_id,
+        caption=f"🚨 **طلب شحن رصيد جديد (صورة إيصال)!**\n\n👤 المستخدم: `{user_id}`\n📦 رقم الطلب: `{order_id}`\n💬 يوزر العميل: @{update.effective_user.username}",
+        reply_markup=InlineKeyboardMarkup(admin_buttons),
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+    
+    
     except: await update.message.reply_text("❌ يرجى إدخال رقم صحيح:"); return WAIT_DEPOSIT_AMOUNT
     
     order_id = context.user_data.get('manage_order_id')
@@ -442,7 +463,7 @@ async def receive_deposit_amount_admin(update: Update, context: ContextTypes.DEF
         cursor.execute("UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE user_id = ?", (amount_usd, amount_jod, uid))
         cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
         conn.commit()
-        try: await context.bot.send_message(chat_id=uid, text=f"🎉 تم إضافة الرصيد إلى حسابك بنجاح!\n💵 القيمة: {amount_usd}$\n🍊 ما يعادلها: {amount_jod:.2f} د.أ")
+        try: await context.bot.send_message(chat_id=uid, text=f"🎉 تم إضافة الرصيد إلى حسابك بنجاح!\n💵 القيمة: {amount_usd}$\n🇯🇴 ما يعادلها: {amount_jod:.2f} د.أ")
         except: pass
         await update.message.reply_text(f"✅ تم إضافة الرصيد للزبون بنجاح واكتملت الحوالة.\n({amount_usd}$ / {amount_jod:.2f} JOD)")
         await update.message.reply_text("✅ تم إضافة الرصيد للزبون بنجاح واكتملت الحوالة.")
@@ -578,7 +599,7 @@ def main():
     input_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(general_callback_handler)],
         states={
-            WAIT_DEPOSIT_PROOF: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deposit_proof)],
+            WAIT_DEPOSIT_PROOF: [MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_deposit_proof)],
             WAIT_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deposit_amount_admin)],
             WAIT_PRODUCT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_product_purchase_info)],
             WAIT_ADMIN_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_broadcast_all)],
