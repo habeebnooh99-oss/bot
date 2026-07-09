@@ -659,6 +659,10 @@ def main():
     application.add_handler(MessageHandler(filters.Text('⚙️ لوحة الإدمن'), admin_panel))
     application.add_handler(CommandHandler('set_profit', set_profit))
     application.add_handler(CallbackQueryHandler(buy_req_handler, pattern="^buy_req_"))
+    application.add_handler(CallbackQueryHandler(admin_users_handler, pattern="^admin_users$"))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_handler, pattern="^admin_broadcast$"))
+    application.add_handler(CallbackQueryHandler(admin_discounts_handler, pattern="^admin_discounts$"))
+    application.add_handler(CallbackQueryHandler(adm_cat_root_handler, pattern="^adm_cat_root$"))
     
     # معالج الضغطات العامة والإدخالات
     application.add_handler(input_conv)
