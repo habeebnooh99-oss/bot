@@ -729,7 +729,29 @@ async def set_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ تم تحديث نسبة الربح المخفية إلى: {new_margin}")
     except:
         await update.message.reply_text("⚠️ اكتب الأمر هكذا: /set_profit 1.04 (يعني 4% ربح)")
+        # أضف هذه الدوال لتعريف المعالجات المفقودة
+async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    # هنا ضع الكود الخاص بقائمة المستخدمين الذي كان سابقاً داخل if data == "admin_users":
+    # مثال:
+    await query.edit_message_text("هنا ستظهر قائمة الزبائن...")
 
+async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("يرجى إرسال الإعلان للتعميم:")
+
+async def admin_discounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("إعدادات الخصومات:")
+
+async def adm_cat_root_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    # استدعاء دالة عرض الأقسام إذا كانت موجودة لديك
+    await send_admin_category_level(update, context, parent_id=None)
 # لا تنسَ إضافة الهاندلر في الأسفل:
 async def buy_req_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
