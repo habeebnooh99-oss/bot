@@ -1,10 +1,12 @@
+import os
+import json
 import logging
-import sqlite3
 from telegram import (
     Update, 
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
-    ReplyKeyboardMarkup
+    ReplyKeyboardMarkup, 
+    KeyboardButton
 )
 from telegram.ext import (
     Application, 
@@ -12,684 +14,611 @@ from telegram.ext import (
     MessageHandler, 
     CallbackQueryHandler, 
     ContextTypes, 
-    filters,
-    ConversationHandler
+    filters
 )
 
-# --- الإعدادات الأساسية ---
-TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
-ADMIN_ID = 8529336745
-
+# إعداد السجلات (Logging) لتتبع الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- إعداد قاعدة البيانات وحفظ البيانات تلقائياً ---
-def init_db():
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    
-    # جدول المستخدمين
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        balance_jod REAL DEFAULT 0.0,
-        balance_usd REAL DEFAULT 0.0,
-        discount_pct REAL DEFAULT 0.0
-    )''')
-    
-    # جدول الأقسام الشجرية دون حدود
-    cursor.execute('''CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        parent_id INTEGER DEFAULT NULL
-    )''')
-    
-    # جدول المنتجات
-    cursor.execute('''CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        description TEXT,
-        price_jod REAL,
-        price_usd REAL,
-        category_id INTEGER
-    )''')
-    
-    # جدول الطلبات لشحن الرصيد والمراجعة
-    cursor.execute('''CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        type TEXT, 
-        status TEXT DEFAULT 'pending',
-        details TEXT,
-        product_id INTEGER NULL,
-        amount_usd REAL DEFAULT 0.0
-    )''')
-    
-    conn.commit()
-    conn.close()
+# --- الإعدادات الأساسية والثوابت ---
+TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
+ADMIN_ID = 8529336745
+DB_FILE = "database.json"
+USD_TO_JOD = 0.71  # سعر الصرف الافتراضي
 
-init_db()
+# --- إدارة قاعدة البيانات (JSON) ---
+def load_db():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {
+        "users": {},        # id: {name, balance_usd, discount}
+        "categories": {},   # id: {name, parent_id, sub_categories: [], products: []}
+        "products": {},     # id: {name, description, price_usd, parent_id}
+        "orders": {},       # id: {user_id, type: 'buy'/'charge', details, status}
+        "profit_margin": 0.0 # نسبة الربح العامة (مثال: 0.04 تعني 4%)
+    }
 
-# --- حالات إدخال البيانات (Conversation States) ---
-(
-    WAIT_DEPOSIT_PROOF, 
-    WAIT_DEPOSIT_AMOUNT,
-    WAIT_PRODUCT_INFO, 
-    WAIT_ADMIN_BROADCAST, 
-    WAIT_ADMIN_PRIVATE_ID, 
-    WAIT_ADMIN_PRIVATE_MSG,
-    WAIT_ADMIN_CAT_NAME, 
-    WAIT_ADMIN_PROD_NAME, 
-    WAIT_ADMIN_PROD_DESC, 
-    WAIT_ADMIN_PROD_JOD, 
-    WAIT_ADMIN_PROD_USD, 
-    WAIT_ADMIN_DISCOUNT_ID, 
-    WAIT_ADMIN_DISCOUNT_PCT
-) = range(13)
+def save_db(db_data):
+    with open(DB_FILE, 'w', encoding='utf-8') as f:
+        json.dump(db_data, f, ensure_ascii=False, indent=4)
 
-# --- لوحات المفاتيح السفلية الرئيسية ---
+db = load_db()
+
+# مساعدة في تتبع الحالات المؤقتة للمستخدمين أثناء المحادثة (FSM يدوي بسيط)
+USER_STATES = {}
+
+# --- دالات مساعدة للحسابات والأسعار ---
+def calculate_prices(product_price_usd, user_discount_pct):
+    # إضافة نسبة الربح أولاً
+    price_with_profit = product_price_usd * (1 + db.get("profit_margin", 0.0))
+    # تطبيق خصم الزبون الخاص
+    final_usd = price_with_profit * (1 - (user_discount_pct / 100.0))
+    final_jod = final_usd * USD_TO_JOD
+    return round(final_usd, 2), round(final_jod, 2)
+
+# --- أزرار الكيبورد الرئيسية ---
 def get_main_keyboard(user_id):
+    keyboard = [
+        [KeyboardButton("🏪 المتجر"), KeyboardButton("👤 حسابي")],
+        [KeyboardButton("📦 طلباتي"), KeyboardButton("💰 شحن الرصيد")],
+        [KeyboardButton("📞 الدعم الفني")]
+    ]
     if user_id == ADMIN_ID:
-        return ReplyKeyboardMarkup([
-            ['🛒 المتجر', '👤 حسابي'],
-            ['📦 طلباتي', '💰 شحن الرصيد'],
-            ['📞 الدعم الفني', '⚙️ لوحة الإدمن']
-        ], resize_keyboard=True)
-    else:
-        return ReplyKeyboardMarkup([
-            ['🛒 المتجر', '👤 حسابي'],
-            ['📦 طلباتي', '💰 شحن الرصيد'],
-            ['📞 الدعم الفني']
-        ], resize_keyboard=True)
+        keyboard.append([KeyboardButton("👑 لوحة التحكم للآدمن")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_or_create_user(user_id, username):
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, balance_jod, balance_usd, discount_pct FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    if not user:
-        username_str = f"@{username}" if username else "بلا يوزر"
-        cursor.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username_str))
-        conn.commit()
-        cursor.execute("SELECT user_id, username, balance_jod, balance_usd, discount_pct FROM users WHERE user_id = ?", (user_id,))
-        user = cursor.fetchone()
-    conn.close()
-    return user
-
-# --- الأوامر العامة والقوائم الثابتة ---
+# --- بدء تشغيل البوت ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    get_or_create_user(user_id, update.effective_user.username)
+    user = update.effective_user
+    u_id = str(user.id)
+    
+    # تسجيل الزبون إن لم يكن مسجلاً
+    if u_id not in db["users"]:
+        db["users"][u_id] = {
+            "name": user.full_name,
+            "balance_usd": 0.0,
+            "discount": 0.0
+        }
+        save_db(db)
+        
     await update.message.reply_text(
-        "✨ أهلاً بك في بوت **ALEX CARD** ✨\nيرجى استخدام الأزرار في الأسفل للتنقل.",
-        reply_markup=get_main_keyboard(user_id),
-        parse_mode="Markdown"
+        f"👋 أهلاً بك في بوت *ALEX CARD* المتميز.\nيسعدنا خدمتك! اختر قسماً من القائمة بالأسفل.",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(user.id)
     )
-    return ConversationHandler.END
 
-async def my_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- معالجة الرسائل النصية وقوائم الأزرار التفاعلية ---
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
     user_id = update.effective_user.id
-    user = get_or_create_user(user_id, update.effective_user.username)
-    text = (
-        f"👤 **معلومات حسابك الشخصي:**\n\n"
-        f"🆔 الأيدي الخاص بك: `{user[0]}`\n"
-        f"📝 الاسم: {update.effective_user.first_name}\n"
-        f"💰 رصيدك بالدينار: `{user[2]:.2f} JOD`\n"
-        f"💵 رصيدك بالدولار: `{user[3]:.2f} USD`\n"
-        f"📉 نسبة الخصم الخاصة بك: `{user[4]}%`"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, type, details FROM orders WHERE user_id = ?", (user_id,))
-    orders = cursor.fetchall()
-    conn.close()
+    u_id = str(user_id)
     
-    if not orders:
-        await update.message.reply_text("📦 ليس لديك أي طلبات تحت المراجعة حالياً.")
+    # تأمين تسجيل الزبون
+    if u_id not in db["users"]:
+        db["users"][u_id] = {"name": update.effective_user.full_name, "balance_usd": 0.0, "discount": 0.0}
+        save_db(db)
+
+    # 1. قائمة المتجر للزبون
+    if text == "🏪 المتجر":
+        USER_STATES[user_id] = {}
+        await show_store_category(update, context, "root")
         return
-    msg = "📦 **طلباتك القائمة وتحت المراجعة:**\n\n"
-    for order in orders:
-        o_type = "شراء منتج" if order[1] == 'purchase' else "شحن رصيد"
-        msg += f"🔹 **رقم الطلب:** `{order[0]}`\n🔹 **النوع:** {o_type}\n🔹 **التفاصيل:** {order[2]}\n------------------\n"
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📞 **قسم الدعم الفني لمساعدتك:**\n\n🟢 رقم الواتساب: +962776445110\n🔵 التليجرام: @htb1b")
+    # 2. حسابي
+    elif text == "👤 حسابي":
+        u_data = db["users"][u_id]
+        bal_usd = u_data["balance_usd"]
+        bal_jod = round(bal_usd * USD_TO_JOD, 2)
+        disc = u_data["discount"]
+        msg = (
+            f"👤 *معلومات حسابك الخاص:*\n\n"
+            f"🆔 الآيدي الخاص بك: `{u_id}`\n"
+            f"👤 الاسم: *{u_data['name']}*\n"
+            f"💰 الرصيد بالدولار: `${bal_usd}`\n"
+            f"🇯🇴 الرصيد بالدينار: `{bal_jod} JOD`\n"
+            f"📉 نسبة خصمك الخاصة: %{disc}"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+        return
 
-# --- قائمة شحن الرصيد للزبائن ---
-async def deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🇯🇴 محفظة أورنج موني", callback_data="dep_orange")],
-        [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("💰 الرجاء اختيار طريقة شحن الرصيد المناسبة:", reply_markup=reply_markup)
+    # 3. طلباتي
+    elif text == "📦 طلباتي":
+        user_orders = [o_id for o_id, o in db["orders"].items() if str(o["user_id"]) == u_id and o["status"] == "pending"]
+        if not user_orders:
+            await update.message.reply_text("📭 ليس لديك أي طلبات قيد المراجعة حالياً.")
+        else:
+            msg = "⏳ *طلباتك قيد المراجعة والتدقيق:*\n\n"
+            for o_id in user_orders:
+                o = db["orders"][o_id]
+                msg += f"📋 رقم الطلب: `{o_id}`\n🔹 التفاصيل: {o['details']}\n-------------------------\n"
+            await update.message.reply_text(msg, parse_mode="Markdown")
+        return
 
-# --- تصفح المتجر للزبائن (شجري بالكامل وبدون قيود) ---
-async def store_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_user_category_level(update, context, parent_id=None, is_callback=False)
+    # 4. شحن الرصيد
+    elif text == "💰 شحن الرصيد":
+        keyboard = [
+            [InlineKeyboardButton("🍊 أورنج موني (الأردن)", callback_data="charge_orange")],
+            [InlineKeyboardButton("🌍 شحن لجميع الدول العربية والأجنبية", callback_data="charge_global")]
+        ]
+        await update.message.reply_text("⚡️ يرجى اختيار وسيلة الشحن المناسبة لك:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
-async def send_user_category_level(update, context, parent_id, is_callback=False):
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    if parent_id is None:
-        cursor.execute("SELECT id, name FROM categories WHERE parent_id IS NULL")
-    else:
-        cursor.execute("SELECT id, name FROM categories WHERE parent_id = ?", (parent_id,))
-    categories = cursor.fetchall()
-    
-    products = []
-    if parent_id is not None:
-        cursor.execute("SELECT id, name, price_jod, price_usd FROM products WHERE category_id = ?", (parent_id,))
-        products = cursor.fetchall()
-    conn.close()
-    
-    keyboard = []
-    for cat in categories:
-        keyboard.append([InlineKeyboardButton(f"📁 {cat[1]}", callback_data=f"u_cat_{cat[0]}")])
-    for prod in products:
-        keyboard.append([InlineKeyboardButton(f"🛒 {prod[1]} ({prod[3]}$ / {prod[2]} د.أ)", callback_data=f"u_prod_{prod[0]}")])
+    # 5. الدعم الفني
+    elif text == "📞 الدعم الفني":
+        msg = (
+            "📌 *قسم الدعم الفني وخدمة العملاء:*\n\n"
+            "🟢 واتساب: +962776445110\n"
+            "🔵 تليجرام: @htb1b\n\n"
+            "تواصل معنا في أي وقت، نحن هنا لمساعدتك!"
+        )
+        await update.message.reply_text(msg)
+        return
+
+    # 6. لوحة تحكم الآدمن
+    elif text == "👑 لوحة التحكم للآدمن" and user_id == ADMIN_ID:
+        keyboard = [
+            [InlineKeyboardButton("🏪 إدارة أقسام ومتجر البوت", callback_data="admin_store_root")],
+            [InlineKeyboardButton("👥 قائمة ومراقبة الزبائن", callback_data="admin_users")],
+            [InlineKeyboardButton("📢 إرسال إعلان (جماعي / خاص)", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("📉 إدارة الخصومات المخصصة", callback_data="admin_discounts")],
+            [InlineKeyboardButton("📈 تعيين نسبة الربح العامة", callback_data="admin_profit")]
+        ]
+        await update.message.reply_text("⚙️ *مرحباً بك في لوحة تحكم الآدمن الحصرية:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # --- معالجة المدخلات النصية التشعبية (انتظار ردود مستخدم أو آدمن) ---
+    state = USER_STATES.get(user_id, {})
+    action = state.get("action")
+
+    if action == "wait_info_buy":
+        p_id = state["prod_id"]
+        prod = db["products"][p_id]
+        u_disc = db["users"][u_id]["discount"]
+        final_usd, final_jod = calculate_prices(prod["price_usd"], u_disc)
         
-    if parent_id is not None:
-        conn = sqlite3.connect('alex_card.db')
-        c = conn.cursor()
-        c.execute("SELECT parent_id FROM categories WHERE id = ?", (parent_id,))
-        gp = c.fetchone()
-        conn.close()
-        back_data = f"u_cat_{gp[0]}" if (gp and gp[0]) else "u_root"
-        keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=back_data)])
-        
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    msg_text = "🛒 **تصفح الأقسام والمنتجات المتاحة:**"
-    if is_callback:
-        await update.callback_query.edit_message_text(msg_text, reply_markup=reply_markup, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="Markdown")
-
-# --- لوحة التحكم للإدمن الشجرية بدون حدود ---
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    await send_admin_main_menu(update, context, is_callback=False)
-
-async def send_admin_main_menu(update, context, is_callback=False):
-    keyboard = [
-        [InlineKeyboardButton("📁 إدارة المتجر والأقسام", callback_data="adm_cat_root"), InlineKeyboardButton("👥 قائمة الزبائن", callback_data="admin_users")],
-        [InlineKeyboardButton("📢 إرسال إعلان للإعلام", callback_data="admin_broadcast"), InlineKeyboardButton("📉 إدارة الخصومات", callback_data="admin_discounts")]
-    ]
-    text = "⚙️ **مرحباً بك في لوحة تحكم الإدمن الأساسية:**"
-    if is_callback:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    else:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-async def send_admin_category_level(update, context, parent_id):
-    context.user_data['adm_curr_cat'] = parent_id
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    if parent_id is None:
-        cursor.execute("SELECT id, name FROM categories WHERE parent_id IS NULL")
-    else:
-        cursor.execute("SELECT id, name FROM categories WHERE parent_id = ?", (parent_id,))
-    sub_cats = cursor.fetchall()
-    
-    prods = []
-    if parent_id is not None:
-        cursor.execute("SELECT id, name FROM products WHERE category_id = ?", (parent_id,))
-        prods = cursor.fetchall()
-    conn.close()
-    
-    keyboard = []
-    for c in sub_cats:
-        keyboard.append([InlineKeyboardButton(f"📁 {c[1]}", callback_data=f"adm_cat_{c[0]}"), InlineKeyboardButton("❌ حذف قسم", callback_data=f"del_cat_{c[0]}")])
-    for p in prods:
-        keyboard.append([InlineKeyboardButton(f"🛍️ {p[1]}", callback_data="none"), InlineKeyboardButton("❌ حذف منتج", callback_data=f"del_prod_{p[0]}")])
-        
-    # خيارات الإضافة متوفرة دائماً في الشجرة لإنشاء تداخلات غير محدودة
-    keyboard.append([InlineKeyboardButton("➕ إضافة قسم فرعي هنا", callback_data="add_cat")])
-    keyboard.append([InlineKeyboardButton("➕ إضافة منتج في هذا القسم", callback_data="add_prod")])
-        
-    if parent_id is not None:
-        conn = sqlite3.connect('alex_card.db')
-        c = conn.cursor()
-        c.execute("SELECT parent_id FROM categories WHERE id = ?", (parent_id,))
-        gp = c.fetchone()
-        conn.close()
-        b_data = f"adm_cat_{gp[0]}" if (gp and gp[0]) else "adm_cat_root"
-        keyboard.append([InlineKeyboardButton("🔙 رجوع للخلف", callback_data=b_data)])
-    else:
-        keyboard.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="admin_panel_main")])
-        
-    await update.callback_query.edit_message_text("📁 **إدارة شجرة الأقسام والمنتجات دون قيود:**", reply_markup=InlineKeyboardMarkup(keyboard))
-
-# --- المعالج العام لضغطات الأزرار (Callback Queries) ---
-async def general_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    user_id = query.from_user.id
-    await query.answer()
-    
-    # 1. شحن رصيد العميل
-    if data == "back_to_dep":
-        keyboard = [[InlineKeyboardButton("🍊 محفظة أورنج موني", callback_data="dep_orange")], [InlineKeyboardButton("🌍 الشحن لجميع الدول العربية والأجنبية", callback_data="dep_global")]]
-        await query.edit_message_text("💰 **الرجاء اختيار طريقة شحن الرصيد المناسبة لك:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    elif data == "dep_orange":
-        text = "🍊 **معلومات التحويل عبر أورنج موني:**\n\n📱 رقم المحفظة: `0776445110`\n💼 اسم المحفظة: `SALMAN NOUH SALMAN AL-BADAREEN`\n\n⚠️ **الخطوة التالية:** يرجى تصوير إيصال التحويل (لقطة شاشة/Screenshot) وإرسال الصورة هنا لتأكيد طلبك 👇"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
-        return WAIT_DEPOSIT_PROOF
-    elif data == "dep_global":
-        text = "🌍 **الشحن للدول العربية والأجنبية:**\n\nنوفر طرق دفع متعددة تناسب بلدك.\n📥 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n💬 التواصل مع الإدارة:\nتليجرام : @htb1b"
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_dep")]]))
-
-    # 2. تصفح العميل للمتجر
-    elif data == "u_root":
-        await send_user_category_level(update, context, parent_id=None, is_callback=True)
-    elif data.startswith("u_cat_"):
-        await send_user_category_level(update, context, parent_id=int(data.split("_")[2]), is_callback=True)
-    elif data.startswith("u_prod_"):
-        prod_id = int(data.split("_")[2])
-        conn = sqlite3.connect('alex_card.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, description, price_jod, price_usd, category_id FROM products WHERE id = ?", (prod_id,))
-        prod = cursor.fetchone()
-        user = get_or_create_user(user_id, query.from_user.username)
-        conn.close()
-        
-        discount = user[4]
-        final_jod = prod[2] * (1 - discount/100)
-        final_usd = prod[3] * (1 - discount/100)
-        
-        desc_text = f"🛍️ **اسم المنتج:** {prod[0]}\n📝 **الوصف:**\n{prod[1]}\n\n💰 **السعر الأصلي:** {prod[3]}$ / {prod[2]} د.أ\n📉 **سعرك بعد الخصم ({discount}%):** `{final_usd:.2f}$` / `{final_jod:.2f} د.أ`\n\n⚠️ أرسل المعلومات اللازمة المطلوبة للشراء بالضغط أدناه."
-        keyboard = [[InlineKeyboardButton("💳 شراء الآن", callback_data=f"buy_req_{prod_id}")], [InlineKeyboardButton("🔙 رجوع", callback_data=f"u_cat_{prod[4]}")] ]
-        await query.edit_message_text(desc_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    elif data.startswith("buy_req_"):
-        context.user_data['buy_prod_id'] = int(data.split("_")[2])
-        await query.edit_message_text("📥 **يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لإتمام طلبك:**")
-        return WAIT_PRODUCT_INFO
-
-    # 3. لوحة تحكم الإدمن الشجرية
-    elif user_id == ADMIN_ID:
-        if data == "admin_panel_main":
-            await send_admin_main_menu(update, context, is_callback=True)
-        elif data == "admin_users":
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id, username, balance_usd FROM users")
-            users = cursor.fetchall()
-            conn.close()
-            msg = "👥 **قائمة الزبائن المسجلين:**\n\n"
-            for u in users: msg += f"🔹 {u[1]} | الأيدي: `{u[0]}` | رصيد: `{u[2]}$`\n"
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel_main")]]))
-        elif data == "admin_broadcast":
-            kb = [[InlineKeyboardButton("📢 للكل", callback_data="bc_all"), InlineKeyboardButton("👤 لشخص معين", callback_data="bc_one")], [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel_main")]]
-            await query.edit_message_text("📢 **اختر نوع الإعلان:**", reply_markup=InlineKeyboardMarkup(kb))
-        elif data == "bc_all":
-            await query.edit_message_text("✍️ أرسل محتوى الرسالة الإعلانية للجميع:")
-            return WAIT_ADMIN_BROADCAST
-        elif data == "bc_one":
-            await query.edit_message_text("✍️ يرجى إدخال أيدي الشخص المستهدف:")
-            return WAIT_ADMIN_PRIVATE_ID
-        elif data == "admin_discounts":
-            await query.edit_message_text("📉 يرجى إدخال أيدي الزبون المراد تحديد خصم له:")
-            return WAIT_ADMIN_DISCOUNT_ID
-        elif data == "adm_cat_root":
-            await send_admin_category_level(update, context, parent_id=None)
-        elif data.startswith("adm_cat_"):
-            await send_admin_category_level(update, context, parent_id=int(data.split("_")[2]))
-        elif data == "add_cat":
-            await query.edit_message_text("✍️ أدخل اسم القسم الجديد:")
-            return WAIT_ADMIN_CAT_NAME
-        elif data == "add_prod":
-            await query.edit_message_text("✍️ أدخل اسم المنتج الجديد المراد إضافته:")
-            return WAIT_ADMIN_PROD_NAME
-        elif data.startswith("del_cat_"):
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM categories WHERE id = ?", (int(data.split("_")[2]),))
-            conn.commit()
-            conn.close()
-            await query.edit_message_text("✅ تم حذف القسم بنجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="adm_cat_root")]]))
-        elif data.startswith("del_prod_"):
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM products WHERE id = ?", (int(data.split("_")[2]),))
-            conn.commit()
-            conn.close()
-            await query.edit_message_text("✅ تم حذف المنتج بنجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="adm_cat_root")]]))
+        # التأكد من الرصيد أولاً
+        if db["users"][u_id]["balance_usd"] < final_usd:
+            await update.message.reply_text("❌ رصيدك الحالي غير كافي لإتمام هذه العملية! يرجى شحن حسابك أولاً.")
+            USER_STATES[user_id] = {}
+            return
             
-        # معالجة قرارات طلبات الشحن والشراء من الإدمن
-        elif data.startswith("approve_dep_"):
-            order_id = int(data.split("_")[2])
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-            order = cursor.fetchone()
-            if order:
-                    uid = order[0]
-                    cursor.execute("UPDATE users SET balance_usd = balance_usd + 10 WHERE user_id = ?", (uid,))
-                    cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
-                    conn.commit()
-                    try:
-                            await context.bot.send_message(chat_id=uid, text="🎉 تم قبول طلب الشحن وتحديث رصيدك بنجاح!")
-                    except:
-                        pass
-            conn.close()
-            await query.edit_message_text("✅ تم قبول طلب الشحن بنجاح!")
-        elif data.startswith("deny_dep_"):
-            order_id = int(data.split("_")[2])
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-            order = cursor.fetchone()
-            cursor.execute("UPDATE orders SET status = 'denied' WHERE id = ?", (order_id,))
-            conn.commit()
-            conn.close()
-            try: await context.bot.send_message(chat_id=order[0], text="❌ تم الرفض يرجى الاتصال بالدعم الفني")
-            except: pass
-            await query.edit_message_text("❌ تم رفض طلب الشحن بنجاح.")
-        elif data.startswith("approve_buy_"):
-            order_id = int(data.split("_")[2])
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id, amount_usd, status FROM orders WHERE id = ?", (order_id,))
-            order = cursor.fetchone()
-            if order and order[2] == 'pending':
-                uid, cost_usd = order[0], order[1]
-                cursor.execute("SELECT balance_usd FROM users WHERE user_id = ?", (uid,))
-                user_bal = cursor.fetchone()
-                if user_bal and user_bal[0] >= cost_usd:
-                    cursor.execute("UPDATE users SET balance_usd = balance_usd - ? WHERE user_id = ?", (cost_usd, uid))
-                    cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
-                    conn.commit()
-                    try: await context.bot.send_message(chat_id=uid, text="🎉 تم قبول الطلب")
-                    except: pass
-                    await query.edit_message_text("✅ تم قبول الطلب وخصم الرصيد بنجاح.")
-                else:
-                    await query.edit_message_text("⚠️ رصيد العميل غير كافي لإتمام الخصم.")
-            conn.close()
-        elif data.startswith("deny_buy_"):
-            order_id = int(data.split("_")[2])
-            conn = sqlite3.connect('alex_card.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-            order = cursor.fetchone()
-            cursor.execute("UPDATE orders SET status = 'denied' WHERE id = ?", (order_id,))
-            conn.commit()
-            conn.close()
-            try: await context.bot.send_message(chat_id=order[0], text="تم رفض الطلب يرجى التواصل مع الاداره")
-            except: pass
-            await query.edit_message_text("❌ تم رفض طلب الشراء.")
-            
-    return ConversationHandler.END
-
-# --- وظائف استقبال النصوص واستكمال الإدخالات الحساسة ---
-async def receive_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    proof_text = update.message.text
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO orders (user_id, type, details) VALUES (?, 'deposit', ?)", (user_id, proof_text))
-    order_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✅ تم إرسال إثبات الشحن إلى الإدارة بنجاح.")
-    
-    # التأكد أن الزبون أرسل صورة إيصال بالفعل وليس نصاً
-    if not update.message.photo:
-        await update.message.reply_text("❌ عذراً، يرجى إرسال صورة واضحة للإيصال (لقطة شاشة) لتأكيد طلبك:")
-        return WAIT_DEPOSIT_PROOF
-
-    photo_file_id = update.message.photo[-1].file_id
-
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO orders (user_id, type, details) VALUES (?, 'deposit', ?)", (user_id, f"PHOTO_ID:{photo_file_id}"))
-    order_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("✅ تم إرسال صورة الإيصال بنجاح إلى الإدارة. يرجى الانتظار لحين المراجعة.")
-
-    admin_buttons = [[InlineKeyboardButton("✅ قبول", callback_data=f"approve_dep_{order_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"deny_dep_{order_id}")]]
-    
-    await context.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=photo_file_id,
-        caption=f"🚨 **طلب شحن رصيد جديد (صورة إيصال)!**\n\n👤 المستخدم: `{user_id}`\n📦 رقم الطلب: `{order_id}`\n💬 يوزر العميل: @{update.effective_user.username}",
-        reply_markup=InlineKeyboardMarkup(admin_buttons),
-        parse_mode="Markdown"
-    )
-    return ConversationHandler.END
-
-async def receive_deposit_amount_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    order_id = context.user_data.get('manage_order_id')
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-    order = cursor.fetchone()
-    if order:
-        uid = order[0]
-        amount_jod = amount_usd * 0.71
-        cursor.execute("UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE user_id = ?", (amount_usd, amount_jod, uid))
-        cursor.execute("UPDATE orders SET status = 'approved' WHERE id = ?", (order_id,))
-        conn.commit()
-        try: await context.bot.send_message(chat_id=uid, text=f"🎉 تم إضافة الرصيد إلى حسابك بنجاح!\n💵 القيمة: {amount_usd}$\n🇯🇴 ما يعادلها: {amount_jod:.2f} د.أ")
-        except: pass
-        await update.message.reply_text(f"✅ تم إضافة الرصيد للزبون بنجاح واكتملت الحوالة.\n({amount_usd}$ / {amount_jod:.2f} JOD)")
-        await update.message.reply_text("✅ تم إضافة الرصيد للزبون بنجاح واكتملت الحوالة.")
-    conn.close()
-    return ConversationHandler.END
-
-async def receive_product_purchase_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    info_text = update.message.text
-    prod_id = context.user_data.get('buy_prod_id')
-    
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, price_jod, price_usd FROM products WHERE id = ?", (prod_id,))
-    prod = cursor.fetchone()
-    user = get_or_create_user(user_id, update.effective_user.username)
-    
-    discount = user[4]
-    final_jod = prod[1] * (1 - discount/100)
-    final_usd = prod[2] * (1 - discount/100)
-    
-    if user[3] < final_usd and user[2] < final_jod:
-        await update.message.reply_text("❌ رصيدك غير كافي يرجى الشحن اولا")
-        conn.close()
-        return ConversationHandler.END
+        o_id = str(len(db["orders"]) + 1001)
+        db["orders"][o_id] = {
+            "user_id": user_id,
+            "type": "buy",
+            "prod_id": p_id,
+            "details": f"شراء منتج: {prod['name']} | معلومات العميل: {text}",
+            "status": "pending",
+            "cost_usd": final_usd
+        }
+        save_db(db)
         
-    cursor.execute("INSERT INTO orders (user_id, type, details, product_id, amount_usd) VALUES (?, 'purchase', ?, ?, ?)", (user_id, f"المنتج: {prod[0]} | تفاصيل: {info_text}", prod_id, final_usd))
-    order_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    
-    await update.message.reply_text("✅ تم إرسال طلب الشراء الخاص بك إلى الإدارة وهو قيد المراجعة.")
-    admin_buttons = [[InlineKeyboardButton("✅ قبول", callback_data=f"approve_buy_{order_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"deny_buy_{order_id}")]]
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"🚨 **طلب شراء منتج!**\n👤 الزبون: `{user_id}`\n🛍️ السعر: {final_usd:.2f}$\n📝 معلوماته:\n{info_text}", reply_markup=InlineKeyboardMarkup(admin_buttons), parse_mode="Markdown")
-    return ConversationHandler.END
+        # إرسال إشعار للآدمن
+        admin_keyboard = [
+            [InlineKeyboardButton("✅ قبول الطلب", callback_data=f"approve_buy_{o_id}"),
+             InlineKeyboardButton("❌ رفض الطلب", callback_data=f"reject_buy_{o_id}")]
+        ]
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"🛒 *طلب شراء جديد مروّس برقم* (`{o_id}`):\n\n"
+                 f"👤 العميل: *{update.effective_user.full_name}* (`{u_id}`)\n"
+                 f"📦 المنتج: {prod['name']}\n"
+                 f"💰 السعر النهائي: `${final_usd}` | `{final_jod} JOD`\n"
+                 f"📝 البيانات المرسلة: {text}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(admin_keyboard)
+        )
+        await update.message.reply_text("⏳ تم إرسال طلبك ومستنداتك بنجاح إلى الإدارة. الطلب الآن تحت المراجعة الفورية.")
+        USER_STATES[user_id] = {}
 
-async def receive_admin_broadcast_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-    conn.close()
-    for u in users:
-        try: await context.bot.send_message(chat_id=u[0], text=f"📢 **إعلان من الإدارة:**\n\n{update.message.text}")
-        except: pass
-    await update.message.reply_text("✅ تم إرسال الإعلان للكل بنجاح.")
-    return ConversationHandler.END
-
-async def receive_admin_private_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    context.user_data['target_user_id'] = update.message.text
-    await update.message.reply_text("✍️ أرسل الآن محتوى الرسالة للشخص:")
-    return WAIT_ADMIN_PRIVATE_MSG
-
-async def receive_admin_private_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    try:
-        await context.bot.send_message(chat_id=int(context.user_data.get('target_user_id')), text=f"📩 **رسالة خاصة من الإدارة:**\n\n{update.message.text}")
-        await update.message.reply_text("✅ تم الإرسال الفردي بنجاح.")
-    except: await update.message.reply_text("❌ تعذر الإرسال.")
-    return ConversationHandler.END
-
-async def receive_admin_discount_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    context.user_data['discount_user_id'] = update.message.text
-    await update.message.reply_text("✍️ أرسل نسبة الخصم المئوية (مثال 15 لخصم 15%):")
-    return WAIT_ADMIN_DISCOUNT_PCT
-
-async def receive_admin_discount_pct(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    try: pct = float(update.message.text)
-    except: await update.message.reply_text("❌ قيمة خاطئة"); return WAIT_ADMIN_DISCOUNT_PCT
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET discount_pct = ? WHERE user_id = ?", (pct, int(context.user_data.get('discount_user_id'))))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"📉 تم تطبيق الخصم الشامل للزبون.")
-    return ConversationHandler.END
-
-async def receive_admin_cat_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO categories (name, parent_id) VALUES (?, ?)", (update.message.text, context.user_data.get('adm_curr_cat')))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✅ تم إضافة القسم بنجاح.")
-    return ConversationHandler.END
-
-async def receive_admin_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    context.user_data['new_prod_name'] = update.message.text
-    await update.message.reply_text("✍️ أرسل الآن وصف المنتج بالكامل وبدقة:")
-    return WAIT_ADMIN_PROD_DESC
-
-async def receive_admin_prod_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    context.user_data['new_prod_desc'] = update.message.text
-    await update.message.reply_text("✍️ أرسل سعر المنتج بالدينار الأردني JOD:")
-    return WAIT_ADMIN_PROD_JOD
-
-async def receive_admin_prod_jod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    context.user_data['new_prod_jod'] = update.message.text
-    await update.message.reply_text("✍️ أرسل سعر المنتج بالدولار الأمريكي USD:")
-    return WAIT_ADMIN_PROD_USD
-
-async def receive_admin_prod_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    try:
-        price_usd = float(update.message.text)
-        price_jod = float(context.user_data.get('new_prod_jod'))
-    except:
-        await update.message.reply_text("❌ الأسعار مدخلة بشكل خاطئ، يرجى المحاولة من جديد.")
-        return ConversationHandler.END
+    elif action == "wait_orange_text":
+        # طلب شحن الرصيد نصياً
+        o_id = str(len(db["orders"]) + 1001)
+        db["orders"][o_id] = {
+            "user_id": user_id,
+            "type": "charge_text",
+            "details": f"طلب شحن محفظة أورنج موني، نص التحويل: {text}",
+            "status": "pending"
+        }
+        save_db(db)
         
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO products (name, description, price_jod, price_usd, category_id) VALUES (?, ?, ?, ?, ?)", 
-                   (context.user_data.get('new_prod_name'), context.user_data.get('new_prod_desc'), price_jod, price_usd, context.user_data.get('adm_curr_cat')))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✅ تم حفظ وإضافة المنتج بشكل ناجح وكامل بنظام الشجرة.")
-    return ConversationHandler.END
+        admin_keyboard = [
+            [InlineKeyboardButton("✅ قبول وإدخال الرصيد", callback_data=f"approve_charge_{o_id}"),
+             InlineKeyboardButton("❌ رفض التحويل", callback_data=f"reject_charge_{o_id}")]
+        ]
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"💰 *طلب شحن رصيد جديد (نصي)* (`{o_id}`):\n\n"
+                 f"👤 العميل: *{update.effective_user.full_name}* (`{u_id}`)\n"
+                 f"📄 نص الحوالة المستلم:\n{text}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(admin_keyboard)
+        )
+        await update.message.reply_text("📥 تم استلام نص الحوالة. يرجى إرسال صورة الحوالة الآن لإكمال الطلب.")
+        USER_STATES[user_id] = {"action": "wait_orange_photo", "order_id": o_id}
 
-# --- مشغل النظام الرئيسي الفعلي وتوزيع المعالجات المستقرة ---
-def main():
-    application = Application.builder().token(TOKEN).build()
-    
-    # الـ ConversationHandler تم تخصيصه لإدارة الإدخالات النصية فقط دون التداخل مع أزرار التنقل
-    input_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(general_callback_handler)],
-        states={
-            WAIT_DEPOSIT_PROOF: [MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_deposit_proof)],
-            WAIT_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deposit_amount_admin)],
-            WAIT_PRODUCT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_product_purchase_info)],
-            WAIT_ADMIN_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_broadcast_all)],
-            WAIT_ADMIN_PRIVATE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_private_id)],
-            WAIT_ADMIN_PRIVATE_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_private_msg)],
-            WAIT_ADMIN_DISCOUNT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_discount_id)],
-            WAIT_ADMIN_DISCOUNT_PCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_discount_pct)],
-            WAIT_ADMIN_CAT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_cat_name)],
-            WAIT_ADMIN_PROD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_name)],
-            WAIT_ADMIN_PROD_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_desc)],
-            WAIT_ADMIN_PROD_JOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_jod)],
-            WAIT_ADMIN_PROD_USD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_prod_usd)]
-        },
-        fallbacks=[CommandHandler('start', start)],
-        allow_reentry=True
-    )
-    
-    # المعالجات الأساسية للبوت
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('add_balance', admin_add_balance_command))
-    application.add_handler(MessageHandler(filters.Text('🛒 المتجر'), store_menu))
-    application.add_handler(MessageHandler(filters.Text('👤 حسابي'), my_account))
-    application.add_handler(MessageHandler(filters.Text('📦 طلباتي'), my_orders))
-    application.add_handler(MessageHandler(filters.Text('💰 شحن الرصيد'), deposit_menu))
-    application.add_handler(MessageHandler(filters.Text('📞 الدعم الفني'), support))
-    application.add_handler(MessageHandler(filters.Text('⚙️ لوحة الإدمن'), admin_panel))
-    
-    # معالج الضغطات العامة والإدخالات
-    application.add_handler(input_conv)
-    application.add_handler(CallbackQueryHandler(general_callback_handler))
-    
-    application.run_polling()
+    elif action == "admin_wait_cat_name":
+        p_id = state.get("parent_id", "root")
+        c_id = str(len(db["categories"]) + 500)
+        db["categories"][c_id] = {"name": text, "parent_id": p_id, "sub_categories": [], "products": []}
+        if p_id != "root":
+            db["categories"][p_id]["sub_categories"].append(c_id)
+        save_db(db)
+        await update.message.reply_text(f"✅ تم إضافة القسم الجديد بنجاح: *{text}*", parse_mode="Markdown")
+        USER_STATES[user_id] = {}
 
+    elif action == "admin_wait_prod_name":
+        c_id = state["cat_id"]
+        USER_STATES[user_id] = {"action": "admin_wait_prod_desc", "cat_id": c_id, "name": text}
+        await update.message.reply_text("📝 ممتاز، الآن أرسل وصفاً تفصيلياً كاملاً للمنتج:")
+
+    elif action == "admin_wait_prod_desc":
+        c_id = state["cat_id"]
+        p_name = state["name"]
+        USER_STATES[user_id] = {"action": "admin_wait_prod_price", "cat_id": c_id, "name": p_name, "desc": text}
+        await update.message.reply_text("💵 حسناً، أرسل سعر المنتج بالدولار الأمريكي كمثال الرقم (10.5):")
+
+    elif action == "admin_wait_prod_price":
+        try:
+            price = float(text)
+        except:
+            await update.message.reply_text("❌ عذراً، يرجى إدخال رقم صحيح وصالح (مثال: 15 أو 20.5):")
+            return
+        c_id = state["cat_id"]
+        p_id = str(len(db["products"]) + 700)
+        db["products"][p_id] = {
+            "name": state["name"],
+            "description": state["desc"],
+            "price_usd": price,
+            "parent_id": c_id
+        }
+        db["categories"][c_id]["products"].append(p_id)
+        save_db(db)
+        await update.message.reply_text("✅ تم إنشاء المنتج وإضافته للقسم بنجاح تام!")
+        USER_STATES[user_id] = {}
+
+    elif action == "admin_wait_bc_all":
+        count = 0
+        for uid in db["users"].keys():
+            try:
+                await context.bot.send_message(chat_id=int(uid), text=f"📢 *إعلان عام من الإدارة:*\n\n{text}", parse_mode="Markdown")
+                count += 1
+            except:
+                pass
+        await update.message.reply_text(f"📢 تم إرسال الإعلان بنجاح إلى ({count}) مستخدم.")
+        USER_STATES[user_id] = {}
+
+    elif action == "admin_wait_bc_spec_id":
+        if text not in db["users"]:
+            await update.message.reply_text("❌ هذا الآيدي غير مسجل في البوت إطلاقاً!")
+            return
+        USER_STATES[user_id] = {"action": "admin_wait_bc_spec_msg", "target_id": text}
+        await update.message.reply_text("📝 الآن اكتب رسالة الإعلان الموجهة له حصراً:")
+
+    elif action == "admin_wait_bc_spec_msg":
+        t_id = state["target_id"]
+        try:
+            await context.bot.send_message(chat_id=int(t_id), text=f"🔔 *رسالة خاصة من الإدارة:*\n\n{text}", parse_mode="Markdown")
+            await update.message.reply_text("✅ تم إرسال الرسالة الخاصة بنجاح.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل الإرسال بسبب: {e}")
+        USER_STATES[user_id] = {}
+
+    elif action == "admin_wait_disc_id":
+        if text not in db["users"]:
+            await update.message.reply_text("❌ آيدي الزبون خاطئ أو غير متوفر.")
+            return
+        USER_STATES[user_id] = {"action": "admin_wait_disc_val", "target_id": text}
+        await update.message.reply_text("📉 أدخل نسبة الخصم المئوية المخصصة له (مثال: 5 لـ 5%):")
+
+    elif action == "admin_wait_disc_val":
+        try:
+            val = float(text)
+        except:
+            await update.message.reply_text("❌ يرجى إدخال رقم صحيح:")
+            return
+        t_id = state["target_id"]
+        db["users"][t_id]["discount"] = val
+        save_db(db)
+        await update.message.reply_text(f"✅ تم تطبيق خصم ثابت بنسبة %{val} للزبون رقم `{t_id}`.")
+        USER_STATES[user_id] = {}
+
+    elif action == "admin_wait_profit":
+        try:
+            val = float(text)
+        except:
+            await update.message.reply_text("❌ أدخل رقم صحيح لنسبة الربح:")
+            return
+        db["profit_margin"] = val / 100.0
+        save_db(db)
+        await update.message.reply_text(f"✅ تم تعديل نسبة الربح العامة لتصبح %{val} على جميع منتجات المتجر تلقائياً.")
+        USER_STATES[user_id] = {}
+
+    elif action == "admin_wait_charge_amount":
+        try:
+            amount = float(text)
+        except:
+            await update.message.reply_text("❌ أدخل قيمة رصيد صحيحة بالرقم:")
+            return
+        o_id = state["order_id"]
+        o = db["orders"][o_id]
+        t_uid = str(o["user_id"])
         
-    conn.close()
-async def admin_add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if len(context.args) < 2:
-        await update.message.reply_text("❌ طريقة الاستخدام الصحيحة:\n/add_balance [آيدي_المستخدم] [المبلغ_بالدولار]\n\nمثال:\n/add_balance 12345678 10")
-        return
-
-    try:
-        uid = int(context.args[0])
-        amount_usd = float(context.args[1])
-    except ValueError:
-        await update.message.reply_text("❌ خطأ: تأكد من كتابة الآيدي والمبلغ كأرقام صحيحة!")
-        return
-
-    amount_jod = amount_usd * 0.71
-
-    conn = sqlite3.connect('alex_card.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (uid,))
-    user = cursor.fetchone()
-    
-    if user:
-        cursor.execute("UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE user_id = ?", (amount_usd, amount_jod, uid))
-        conn.commit()
+        db["users"][t_uid]["balance_usd"] += amount
+        o["status"] = "approved"
+        save_db(db)
         
+        # إشعار العميل
+        amount_jod = round(amount * USD_TO_JOD, 2)
         try:
             await context.bot.send_message(
-                chat_id=uid, 
-                text=f"🎉 تم إضافة رصيد إلى حسابك بنجاح!\n💰 المبلغ المضاف: {amount_usd}$ / ما يعادل {amount_jod:.2f} JOD."
+                chat_id=int(t_uid),
+                text=f"✅ *تمت الموافقة على شحن رصيدك بنجاح!*\n\n"
+                     f"📥 الرصيد المضاف: `${amount}` | `{amount_jod} JOD`\n"
+                     f"💰 رصيدك الكلي الحالي: `${db['users'][t_uid]['balance_usd']}`",
+                parse_mode="Markdown"
             )
-            user_notified = "وصله الإشعار بنجاح"
         except:
-            user_notified = "لم يصله الإشعار (بسبب الحظر)"
-            
-        await update.message.reply_text(f"✅ تم شحن الحساب بنجاح!\n👤 الزبون: {uid}\n💵 المبلغ: {amount_usd}$\n🇯🇴 ما يعادل: {amount_jod:.2f} JOD\n🔔 حالة الإشعار: {user_notified}")
-    else:
-        await update.message.reply_text("❌ لم يتم العثور على هذا الآيدي في قاعدة بيانات البوت!")
-        
-    conn.close()
+            pass
+        await update.message.reply_text("✅ تم إضافة الرصيد إلى محفظة الزبون وإخطاره في الحين.")
+        USER_STATES[user_id] = {}
 
-if __name__ == '__main__':
+# --- معالجة الصور المرسلة لشحن الرصيد ---
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    state = USER_STATES.get(user_id, {})
+    
+    if state.get("action") == "wait_orange_photo":
+        o_id = state["order_id"]
+        photo_id = update.message.photo[-1].file_id
+        
+        # إعادة توجيه الصورة للآدمن
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=photo_id,
+            caption=f"📸 *صورة إيصال التحويل التابعة للطلب رقم:* (`{o_id}`)",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("✅ تم إرسال الصورة للإدارة للتحقق الجنائي والمالي من التحويل والموافقة.")
+        USER_STATES[user_id] = {}
+
+# --- عرض أقسام المتجر للزبائن ---
+async def show_store_category(update: Update, context: ContextTypes.DEFAULT_TYPE, cat_id: str, query=None):
+    u_id = str(update.effective_user.id)
+    u_disc = db["users"][u_id]["discount"]
+    
+    buttons = []
+    
+    # جلب الأقسام الفرعية التابعة للقسم الحالي
+    sub_cats = [c_id for c_id, c in db["categories"].items() if c["parent_id"] == cat_id]
+    for sc_id in sub_cats:
+        buttons.append([InlineKeyboardButton(f"📁 {db['categories'][sc_id]['name']}", callback_data=f"view_cat_{sc_id}")])
+        
+    # جلب المنتجات التابعة للقسم الحالي
+    prods = [p_id for p_id, p in db["products"].items() if p["parent_id"] == cat_id]
+    for p_id in prods:
+        p = db["products"][p_id]
+        f_usd, f_jod = calculate_prices(p["price_usd"], u_disc)
+        buttons.append([InlineKeyboardButton(f"💎 {p['name']} - (${f_usd} / {f_jod} JOD)", callback_data=f"view_prod_{p_id}")])
+        
+    # إضافة زر الرجوع السلس
+    if cat_id != "root":
+        p_id = db["categories"][cat_id]["parent_id"]
+        buttons.append([InlineKeyboardButton("🔙 العودة للخلف", callback_data=f"view_cat_{p_id}")])
+        
+    text = "🏪 *قائمة المتجر - تصفح بحرية الأقسام المتاحة:*"
+    if cat_id != "root":
+        text = f"📁 القسم: *{db['categories'][cat_id]['name']}*"
+        
+    if query:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+
+# --- معالجة الضغط على الأزرار المضمنة (Callback Query) ---
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+    u_id = str(user_id)
+    
+    # تصفح الأقسام والمنتجات للزبون
+    if data.startswith("view_cat_"):
+        cid = data.replace("view_cat_", "")
+        await show_store_category(update, context, cid, query=query)
+        
+    elif data.startswith("view_prod_"):
+        pid = data.replace("view_prod_", "")
+        prod = db["products"][pid]
+        u_disc = db["users"][u_id]["discount"]
+        f_usd, f_jod = calculate_prices(prod["price_usd"], u_disc)
+        
+        msg = (
+            f"📦 *اسم المنتج:* {prod['name']}\n\n"
+            f"📝 *وصف المنتج:*\n{prod['description']}\n\n"
+            f"💰 *السعر النهائي بالدولار:* `${f_usd}`\n"
+            f"🇯🇴 *السعر النهائي بالدينار:* `{f_jod} JOD`\n\n"
+            f"⚠️ لشراء المنتج، اضغط على زر الشراء بالأسفل لتأكيد المعطيات."
+        )
+        buttons = [
+            [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_now_{pid}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"view_cat_{prod['parent_id']}")]
+        ]
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+        
+    elif data.startswith("buy_now_"):
+        pid = data.replace("buy_now_", "")
+        USER_STATES[user_id] = {"action": "wait_info_buy", "prod_id": pid}
+        await context.bot.send_message(chat_id=user_id, text="📝 *يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لتسليمك المنتج فوراً:*")
+
+    # نظام الشحن للزبون
+    elif data == "charge_orange":
+        msg = (
+            f"🍊 *معلومات تحويل محفظة أورنج موني:*\n\n"
+            f"📱 رقم المحفظة: `0776445110`\n"
+            f"💼 نوع المحفظة: أورنج موني\n"
+            f"👤 اسم صاحب المحفظة: *سلمان نوح سلمان البدارين*\n\n"
+            f"📥 بعد قيامك بالتحويل، يرجى كتابة وإرسال *نص التحويل أو رقم المعاملة* بالرد على هذه الرسالة مباشرة:"
+        )
+        USER_STATES[user_id] = {"action": "wait_orange_text"}
+        await query.edit_message_text(msg, parse_mode="Markdown")
+        
+    elif data == "charge_global":
+        msg = (
+            "🌍 *شحن الرصيد لجميع الدول العربية والأجنبية:*\n\n"
+            "نوفر طرق دفع متعددة ومتنوعة تناسب بلدك المقيم به (سواء كنت في سوريا، مصر، العراق، أو أي دولة أخرى).\n\n"
+            "💬 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً:\n"
+            "✈️ تليجرام الإدارة: @htb1b"
+        )
+        await query.edit_message_text(msg)
+
+    # --- عمليات لوحة تحكم الآدمن ---
+    elif user_id == ADMIN_ID:
+        if data.startswith("admin_store_"):
+            cat_id = data.replace("admin_store_", "")
+            buttons = [
+                [InlineKeyboardButton("➕ إضافة قسم فرعي هنا", callback_data=f"ad_add_cat_{cat_id}")],
+                [InlineKeyboardButton("➕ إضافة منتج داخل هذا القسم", callback_data=f"ad_add_prod_{cat_id}")]
+            ]
+            
+            sub_cats = [c_id for c_id, c in db["categories"].items() if c["parent_id"] == cat_id]
+            for sc_id in sub_cats:
+                buttons.append([
+                    InlineKeyboardButton(f"📁 {db['categories'][sc_id]['name']}", callback_data=f"admin_store_{sc_id}"),
+                    InlineKeyboardButton("❌ حذف", callback_data=f"ad_del_cat_{sc_id}")
+                ])
+                
+            prods = [p_id for p_id, p in db["products"].items() if p["parent_id"] == cat_id]
+            for p_id in prods:
+                buttons.append([
+                    InlineKeyboardButton(f"💎 {db['products'][p_id]['name']}", callback_data="none"),
+                    InlineKeyboardButton("❌ حذف", callback_data=f"ad_del_prod_{p_id}")
+                ])
+                
+            if cat_id != "root":
+                p_id = db["categories"][cat_id]["parent_id"]
+                buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"admin_store_{p_id}")])
+                
+            await query.edit_message_text(f"⚙️ إدارة الأقسام والمنتجات للقسم الحالي: ({cat_id})", reply_markup=InlineKeyboardMarkup(buttons))
+            
+        elif data.startswith("ad_add_cat_"):
+            pid = data.replace("ad_add_cat_", "")
+            USER_STATES[user_id] = {"action": "admin_wait_cat_name", "parent_id": pid}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="📝 أرسل اسم القسم الجديد المراد إنشاؤه:")
+            
+        elif data.startswith("ad_add_prod_"):
+            cid = data.replace("ad_add_prod_", "")
+            USER_STATES[user_id] = {"action": "admin_wait_prod_name", "cat_id": cid}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="📝 أرسل اسم المنتج الجديد:")
+            
+        elif data.startswith("ad_del_cat_"):
+            cid = data.replace("ad_del_cat_", "")
+            p_id = db["categories"][cid]["parent_id"]
+            # حذف من الأب
+            if p_id != "root":
+                db["categories"][p_id]["sub_categories"].remove(cid)
+            db["categories"].pop(cid, None)
+            save_db(db)
+            await query.edit_message_text("✅ تم حذف القسم بالكامل نجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحديث", callback_data=f"admin_store_{p_id}")]]))
+            
+        elif data.startswith("ad_del_prod_"):
+            pid = data.replace("ad_del_prod_", "")
+            c_id = db["products"][pid]["parent_id"]
+            db["categories"][c_id]["products"].remove(pid)
+            db["products"].pop(pid, None)
+            save_db(db)
+            await query.edit_message_text("✅ تم حذف المنتج بنجاح من المتجر.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحديث", callback_data=f"admin_store_{c_id}")]]))
+
+        elif data == "admin_users":
+            msg = "👥 *قائمة جميع المشتركين والزبائن في البوت:*\n\n"
+            for uid, u in db["users"].items():
+                b_usd = u["balance_usd"]
+                b_jod = round(b_usd * USD_TO_JOD, 2)
+                msg += f"👤 الاسم: {u['name']}\n🆔 الآيدي: `{uid}`\n💰 الرصيد: `${b_usd}` / `{b_jod} JOD`\n-------------------------\n"
+            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+
+        elif data == "admin_broadcast":
+            keyboard = [
+                [InlineKeyboardButton("📢 إرسال للجميع", callback_data="bc_all")],
+                [InlineKeyboardButton("👤 إرسال لشخص محدد", callback_data="bc_spec")]
+            ]
+            await query.edit_message_text("📢 حدد نوع الإعلان المطلوب:", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+        elif data == "bc_all":
+            USER_STATES[user_id] = {"action": "admin_wait_bc_all"}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="📝 اكتب الآن رسالة الإعلان الجماعي ليتم بثها فوراً:")
+            
+        elif data == "bc_spec":
+            USER_STATES[user_id] = {"action": "admin_wait_bc_spec_id"}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="🆔 أرسل آيدي الشخص (Telegram ID) المراد مراسلته بدقة:")
+
+        elif data == "admin_discounts":
+            USER_STATES[user_id] = {"action": "admin_wait_disc_id"}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="🆔 أدخل معرف آيدي الزبون المراد عمل خصم مخصص ومستدام له:")
+
+        elif data == "admin_profit":
+            USER_STATES[user_id] = {"action": "admin_wait_profit"}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="📈 أدخل نسبة الربح العامة كأرقام فقط (مثال: ادخل 4 لنسبة 4%):")
+
+        # معالجة قرارات الشراء والشحن من الآدمن للطلبات
+        elif data.startswith("approve_buy_"):
+            oid = data.replace("approve_buy_", "")
+            o = db["orders"][oid]
+            t_uid = str(o["user_id"])
+            cost = o["cost_usd"]
+            
+            if db["users"][t_uid]["balance_usd"] >= cost:
+                db["users"][t_uid]["balance_usd"] -= cost
+                o["status"] = "approved"
+                save_db(db)
+                try:
+                    await context.bot.send_message(chat_id=int(t_uid), text=f"🎉 *تم قبول طلب الشراء رقم* (`{oid}`) *بنجاح!*\nتم تسليم طلبك وخصم القيمة المالية من رصيدك الحالي.", parse_mode="Markdown")
+                except: pass
+                await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم {oid} وتم الخصم من حسابه بنجاح.")
+            else:
+                await query.edit_message_text("❌ رصيد الزبون أصبح غير كافٍ الآن لإتمام العملية!")
+
+        elif data.startswith("reject_buy_"):
+            oid = data.replace("reject_buy_", "")
+            o = db["orders"][oid]
+            o["status"] = "rejected"
+            save_db(db)
+            try:
+                await context.bot.send_message(chat_id=o["user_id"], text="❌ *للأسف، تم رفض طلب الشراء الخاص بك.*\nيرجى التواصل الفوري مع الإدارة لحل المشكلة.")
+            except: pass
+            await query.edit_message_text(f"❌ تم رفض الطلب رقم {oid} وإبلاغ الزبون.")
+
+        elif data.startswith("approve_charge_"):
+            oid = data.replace("approve_charge_", "")
+            USER_STATES[user_id] = {"action": "admin_wait_charge_amount", "order_id": oid}
+            await context.bot.send_message(chat_id=ADMIN_ID, text="💵 أرسل قيمة الرصيد المطلوب إضافته إلى حساب العميل بالدولار الأمريكي ($):")
+
+        elif data.startswith("reject_charge_"):
+            oid = data.replace("reject_charge_", "")
+            o = db["orders"][oid]
+            o["status"] = "rejected"
+            save_db(db)
+            try:
+                await context.bot.send_message(chat_id=o["user_id"], text="❌ *تم رفض طلب شحن الرصيد والتحويل.*\nيرجى الاتصال بالدعم الفني والإدارة للتحقق من العملية.")
+            except: pass
+            await query.edit_message_text(f"❌ تم رفض شحن الحوالة للطلب {oid}.")
+
+# --- تشغيل البوت الهيكلي ---
+def main():
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # تشغيل مستمر دون انقطاع
+    application.run_polling()
+
+if __name__ == "__main__":
     main()
