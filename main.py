@@ -141,7 +141,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 4. شحن الرصيد
     elif text == "💰 شحن الرصيد":
         keyboard = [
-            [InlineKeyboardButton("🍊 أورنج موني (الأردن)", callback_data="charge_orange")],
+            [InlineKeyboardButton("🇯🇴 أورنج موني (الأردن)", callback_data="charge_orange")],
             [InlineKeyboardButton("🌍 شحن لجميع الدول العربية والأجنبية", callback_data="charge_global")]
         ]
         await update.message.reply_text("⚡️ يرجى اختيار وسيلة الشحن المناسبة لك:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -410,7 +410,7 @@ async def show_store_category(update: Update, context: ContextTypes.DEFAULT_TYPE
         p_id = db["categories"][cat_id]["parent_id"]
         buttons.append([InlineKeyboardButton("🔙 العودة للخلف", callback_data=f"view_cat_{p_id}")])
         
-    text = "🏪 *قائمة المتجر - تصفح بحرية الأقسام المتاحة:*"
+    text = "🏪 *قائمة المتجر - تصفح الأقسام المتاحة:*"
     if cat_id != "root":
         text = f"📁 القسم: *{db['categories'][cat_id]['name']}*"
         
@@ -459,11 +459,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # نظام الشحن للزبون
     elif data == "charge_orange":
         msg = (
-            f"🍊 *معلومات تحويل محفظة أورنج موني:*\n\n"
+            f"🇯🇴 *معلومات تحويل محفظة أورنج موني:*\n\n"
             f"📱 رقم المحفظة: `0776445110`\n"
             f"💼 نوع المحفظة: أورنج موني\n"
-            f"👤 اسم صاحب المحفظة: *سلمان نوح سلمان البدارين*\n\n"
-            f"📥 بعد قيامك بالتحويل، يرجى كتابة وإرسال *نص التحويل أو رقم المعاملة* بالرد على هذه الرسالة مباشرة:"
+            f"👤 اسم صاحب المحفظة: *SALMAN NOUH SALMAN AL-BADAREEN*\n\n"
+            f"📥 بعد قيامك بالتحويل، يرجى كتابة وإرسال *الاسم الرباعي او الثلاثي لصاحب المحفظة ومبلغ الذي حولته* بالرد على هذه الرسالة مباشرة:"
         )
         USER_STATES[user_id] = {"action": "wait_orange_text"}
         await query.edit_message_text(msg, parse_mode="Markdown")
@@ -496,7 +496,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prods = [p_id for p_id, p in db["products"].items() if p["parent_id"] == cat_id]
             for p_id in prods:
                 buttons.append([
-                    InlineKeyboardButton(f"💎 {db['products'][p_id]['name']}", callback_data="none"),
+                    InlineKeyboardButton(f"🛍️ {db['products'][p_id]['name']}", callback_data="none"),
                     InlineKeyboardButton("❌ حذف", callback_data=f"ad_del_prod_{p_id}")
                 ])
                 
