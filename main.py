@@ -512,7 +512,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ خطأ: {e}")
 
     # --- عمليات لوحة تحكم الآدمن ---
-    elif user_id == ADMIN_ID:
+elif user_id == ADMIN_ID:
         if data.startswith("admin_store_"):
             cat_id = data.replace("admin_store_", "")
             buttons = [
