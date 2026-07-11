@@ -607,6 +607,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=o["user_id"], text="❌ *تم رفض طلب شحن الرصيد والتحويل.*\nيرجى الاتصال بالدعم الفني والإدارة للتحقق من العملية.")
             except: pass
             await query.edit_message_text(f"❌ تم رفض شحن الحوالة للطلب {oid}.")
+        async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التأكد من هوية الأدمن
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    # التأكد من وجود البيانات
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("⚠️ الصيغة: /add_balance [ID] [المبلغ]")
+        return
+
+    try:
+        target_uid = context.args[0]
+        amount = float(context.args[1])
+        
+        if target_uid not in db["users"]:
+            await update.message.reply_text("❌ هذا المستخدم غير مسجل في البوت!")
+            return
+            
+        # إضافة الرصيد
+        db["users"][target_uid]["balance_usd"] += amount
+        save_db(db)
+        
+        await update.message.reply_text(f"✅ تمت إضافة {amount}$ للزبون {target_uid} بنجاح.")
+        
+        # إشعار الزبون
+        try:
+            await context.bot.send_message(chat_id=int(target_uid), text=f"💰 تم شحن رصيدك بمبلغ {amount}$.")
+        except:
+            pass
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {e}")
 
 # --- تشغيل البوت الهيكلي ---
 def main():
@@ -620,39 +651,6 @@ def main():
 
     # تشغيل مستمر دون انقطاع
     application.run_polling()
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # التأكد من هوية الأدمن
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    # التحقق من المدخلات (يجب أن يكون هناك ID ومبلغ)
-    if not context.args or len(context.args) < 2:
-        await update.message.reply_text("⚠️ الصيغة الصحيحة هي:\n/add_balance [ID] [المبلغ]")
-        return
-
-    try:
-        target_user_id = int(context.args[0])
-        amount_usd = float(context.args[1])
-        amount_jod = amount_usd * 0.71
-
-        # تنفيذ عملية التحديث أو الإضافة
-        cursor.execute('''INSERT OR REPLACE INTO users (id, balance_usd, balance_jod) 
-                          VALUES (?, 
-                                  COALESCE((SELECT balance_usd FROM users WHERE id = ?), 0) + ?, 
-                                  COALESCE((SELECT balance_jod FROM users WHERE id = ?), 0) + ?)''', 
-                       (target_user_id, target_user_id, amount_usd, target_user_id, amount_jod))
-        conn.commit()
-
-        await update.message.reply_text(f"✅ تم إضافة {amount_usd}$ للزبون {target_user_id} بنجاح.")
-        
-        # إشعار الزبون
-        try:
-            await context.bot.send_message(chat_id=target_user_id, text=f"💰 تم شحن رصيدك بقيمة {amount_usd}$.")
-        except:
-            pass # الزبون قد يكون حظر البوت
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ تقني: {str(e)}")
 
 if __name__ == "__main__":
     main()
