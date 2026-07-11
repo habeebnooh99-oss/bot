@@ -616,6 +616,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(CommandHandler("add_balance", add_balance_command))
 
     # تشغيل مستمر دون انقطاع
     application.run_polling()
@@ -655,7 +656,6 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⚠️ خطأ في الصيغة. استخدم: /add_balance [ID] [المبلغ]")
 
 # إضافة الأمر للتطبيق
-app.add_handler(CommandHandler("add_balance", add_balance_command))
 
 if __name__ == "__main__":
     main()
