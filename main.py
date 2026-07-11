@@ -533,7 +533,8 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             
     except Exception as e:
         await update.message.reply_text(f"❌ خطأ: {e}")
-            if cat_id != "root":
+        
+        if cat_id != "root":
                 p_id = db["categories"][cat_id]["parent_id"]
                 buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"admin_store_{p_id}")])
                 
