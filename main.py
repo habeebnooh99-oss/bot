@@ -621,11 +621,13 @@ def main():
     # تشغيل مستمر دون انقطاع
     application.run_polling()
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. التأكد من الأدمن
-    if update.effective_user.id != 8529336745:
+    # هذا السطر هو الأهم لحل مشكلة 'name cursor is not defined'
+    global cursor, conn
+    
+    user_id = update.effective_user.id
+    if user_id != 8529336745:
         return
 
-    # 2. التأكد من الصيغة
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("⚠️ الصيغة: /add_balance [ID] [المبلغ]")
         return
@@ -633,36 +635,17 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         target_user_id = int(context.args[0])
         amount_usd = float(context.args[1])
-        amount_jod = amount_usd * 0.71
+        exchange_rate = 0.71
+        amount_jod = amount_usd * exchange_rate
         
-        # طباعة في سجلات البوت للتأكد (بتقدر تشوفها بـ Railway Logs)
-        print(f"DEBUG: Attempting to add {amount_usd} to user {target_user_id}")
-
-        # 3. محاولة التحديث
-        cursor.execute('''INSERT OR REPLACE INTO users (id, balance_usd, balance_jod) 
-                          VALUES (?, 
-                                  COALESCE((SELECT balance_usd FROM users WHERE id = ?), 0) + ?, 
-                                  COALESCE((SELECT balance_jod FROM users WHERE id = ?), 0) + ?)''', 
-                       (target_user_id, target_user_id, amount_usd, target_user_id, amount_jod))
+        # الآن ستعمل هذه الأسطر لأن cursor أصبح معروفاً
+        cursor.execute('''UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE id = ?''', 
+                       (amount_usd, amount_jod, target_user_id))
         conn.commit()
         
-        # التأكد من نجاح العملية
-        if cursor.rowcount > 0:
-            await update.message.reply_text(f"✅ تم إضافة {amount_usd}$ للزبون {target_user_id} بنجاح.")
-            
-            # محاولة إرسال رسالة للزبون
-            try:
-                await context.bot.send_message(chat_id=target_user_id, 
-                                               text=f"💰 تم شحن رصيدك بقيمة {amount_usd}$ ({amount_jod} JOD).\nشكراً لثقتكم بـ ALEX CARD.")
-            except Exception as e:
-                print(f"DEBUG: Could not notify user: {e}")
-        else:
-            await update.message.reply_text("❌ لم يتم تحديث قاعدة البيانات (ربما الأيدي غير صحيح).")
-
+        await update.message.reply_text(f"✅ تم إضافة {amount_usd}$ للزبون {target_user_id} بنجاح.")
     except Exception as e:
-        # إذا حدث خطأ سيظهر لك هنا
-        await update.message.reply_text(f"❌ خطأ تقني: {str(e)}")
-        print(f"DEBUG: Critical Error: {str(e)}")
+        await update.message.reply_text(f"❌ خطأ: {e}")
 
 if __name__ == "__main__":
     main()
