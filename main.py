@@ -621,31 +621,38 @@ def main():
     # تشغيل مستمر دون انقطاع
     application.run_polling()
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # هذا السطر هو الأهم لحل مشكلة 'name cursor is not defined'
-    global cursor, conn
-    
-    user_id = update.effective_user.id
-    if user_id != 8529336745:
+    # التأكد من هوية الأدمن
+    if update.effective_user.id != ADMIN_ID:
         return
 
+    # التحقق من المدخلات (يجب أن يكون هناك ID ومبلغ)
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text("⚠️ الصيغة: /add_balance [ID] [المبلغ]")
+        await update.message.reply_text("⚠️ الصيغة الصحيحة هي:\n/add_balance [ID] [المبلغ]")
         return
 
     try:
         target_user_id = int(context.args[0])
         amount_usd = float(context.args[1])
-        exchange_rate = 0.71
-        amount_jod = amount_usd * exchange_rate
-        
-        # الآن ستعمل هذه الأسطر لأن cursor أصبح معروفاً
-        cursor.execute('''UPDATE users SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? WHERE id = ?''', 
-                       (amount_usd, amount_jod, target_user_id))
+        amount_jod = amount_usd * 0.71
+
+        # تنفيذ عملية التحديث أو الإضافة
+        cursor.execute('''INSERT OR REPLACE INTO users (id, balance_usd, balance_jod) 
+                          VALUES (?, 
+                                  COALESCE((SELECT balance_usd FROM users WHERE id = ?), 0) + ?, 
+                                  COALESCE((SELECT balance_jod FROM users WHERE id = ?), 0) + ?)''', 
+                       (target_user_id, target_user_id, amount_usd, target_user_id, amount_jod))
         conn.commit()
-        
+
         await update.message.reply_text(f"✅ تم إضافة {amount_usd}$ للزبون {target_user_id} بنجاح.")
+        
+        # إشعار الزبون
+        try:
+            await context.bot.send_message(chat_id=target_user_id, text=f"💰 تم شحن رصيدك بقيمة {amount_usd}$.")
+        except:
+            pass # الزبون قد يكون حظر البوت
+
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        await update.message.reply_text(f"❌ خطأ تقني: {str(e)}")
 
 if __name__ == "__main__":
     main()
