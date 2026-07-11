@@ -403,7 +403,7 @@ async def show_store_category(update: Update, context: ContextTypes.DEFAULT_TYPE
     for p_id in prods:
         p = db["products"][p_id]
         f_usd, f_jod = calculate_prices(p["price_usd"], u_disc)
-        buttons.append([InlineKeyboardButton(f"💎 {p['name']} - (${f_usd} / {f_jod} JOD)", callback_data=f"view_prod_{p_id}")])
+        buttons.append([InlineKeyboardButton(f"🛍️ {p['name']} - (${f_usd} / {f_jod} JOD)", callback_data=f"view_prod_{p_id}")])
         
     # إضافة زر الرجوع السلس
     if cat_id != "root":
@@ -454,7 +454,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("buy_now_"):
         pid = data.replace("buy_now_", "")
         USER_STATES[user_id] = {"action": "wait_info_buy", "prod_id": pid}
-        await context.bot.send_message(chat_id=user_id, text="📝 *يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لتسليمك المنتج فوراً:*")
+        await context.bot.send_message(chat_id=user_id, text="📝 * (أقراء الوصف لمعرفة ماذا ترسل ) يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لتسليمك المنتج فوراً:*")
 
     # نظام الشحن للزبون
     elif data == "charge_orange":
@@ -463,7 +463,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📱 رقم المحفظة: `0776445110`\n"
             f"💼 نوع المحفظة: أورنج موني\n"
             f"👤 اسم صاحب المحفظة: *SALMAN NOUH SALMAN AL-BADAREEN*\n\n"
-            f"📥 بعد قيامك بالتحويل، يرجى كتابة وإرسال *الاسم الرباعي او الثلاثي لصاحب المحفظة ومبلغ الذي حولته* بالرد على هذه الرسالة مباشرة:"
+            f"📥 بعد قيامك بالتحويل، يرجى كتابة وإرسال *الاسم الرباعي او الثلاثي لصاحب المحفظة ومبلغ الذي حولته بنفس الرسالة* ، بالرد على هذه الرسالة مباشرة:"
         )
         USER_STATES[user_id] = {"action": "wait_orange_text"}
         await query.edit_message_text(msg, parse_mode="Markdown")
