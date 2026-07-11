@@ -607,7 +607,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=o["user_id"], text="❌ *تم رفض طلب شحن الرصيد والتحويل.*\nيرجى الاتصال بالدعم الفني والإدارة للتحقق من العملية.")
             except: pass
             await query.edit_message_text(f"❌ تم رفض شحن الحوالة للطلب {oid}.")
-        async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # التأكد من هوية الأدمن
     if update.effective_user.id != ADMIN_ID:
         return
