@@ -607,37 +607,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=o["user_id"], text="❌ *تم رفض طلب شحن الرصيد والتحويل.*\nيرجى الاتصال بالدعم الفني والإدارة للتحقق من العملية.")
             except: pass
             await query.edit_message_text(f"❌ تم رفض شحن الحوالة للطلب {oid}.")
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # التأكد من هوية الأدمن
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    # التأكد من وجود البيانات
-    if not context.args or len(context.args) < 2:
-        await update.message.reply_text("⚠️ الصيغة: /add_balance [ID] [المبلغ]")
-        return
-
-    try:
-        target_uid = context.args[0]
-        amount = float(context.args[1])
-        
-        if target_uid not in db["users"]:
-            await update.message.reply_text("❌ هذا المستخدم غير مسجل في البوت!")
-            return
-            
-        # إضافة الرصيد
-        db["users"][target_uid]["balance_usd"] += amount
-        save_db(db)
-        
-        await update.message.reply_text(f"✅ تمت إضافة {amount}$ للزبون {target_uid} بنجاح.")
-        
-        # إشعار الزبون
-        try:
-            await context.bot.send_message(chat_id=int(target_uid), text=f"💰 تم شحن رصيدك بمبلغ {amount}$.")
-        except:
-            pass
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
 
 # --- تشغيل البوت الهيكلي ---
 def main():
@@ -647,7 +616,6 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(CommandHandler("add_balance", add_balance_command))
 
     # تشغيل مستمر دون انقطاع
     application.run_polling()
