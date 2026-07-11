@@ -476,6 +476,40 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✈️ تليجرام الإدارة: @htb1b"
         )
         await query.edit_message_text(msg)
+async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التأكد من هوية الأدمن
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    # التحقق من المدخلات
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("⚠️ الصيغة الصحيحة: /add_balance [ID] [المبلغ]")
+        return
+
+    try:
+        target_uid = str(context.args[0]) # ID الزبون
+        amount_usd = float(context.args[1]) # المبلغ
+        
+        # التأكد أن المستخدم مسجل في قاعدة بيانات JSON
+        if target_uid not in db["users"]:
+            await update.message.reply_text("❌ هذا المستخدم غير مسجل في البوت!")
+            return
+            
+        # إضافة الرصيد إلى ملف الـ JSON
+        db["users"][target_uid]["balance_usd"] += amount_usd
+        save_db(db) # حفظ التغييرات فوراً
+        
+        # إشعار الأدمن
+        await update.message.reply_text(f"✅ تمت إضافة {amount_usd}$ للزبون {target_uid} بنجاح.")
+        
+        # إشعار الزبون
+        try:
+            await context.bot.send_message(chat_id=int(target_uid), text=f"💰 تم شحن رصيدك بمبلغ {amount_usd}$.")
+        except:
+            pass 
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {e}")
 
     # --- عمليات لوحة تحكم الآدمن ---
     elif user_id == ADMIN_ID:
@@ -616,6 +650,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(CommandHandler("add_balance", add_balance_command))
 
     # تشغيل مستمر دون انقطاع
     application.run_polling()
