@@ -620,7 +620,7 @@ def main():
     # تشغيل مستمر دون انقطاع
     application.run_polling()
     async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+        user_id = update.effective_user.id
     
     # التأكد أن الشخص الذي يستخدم الأمر هو الأدمن فقط
     if user_id != ADMIN_ID:
