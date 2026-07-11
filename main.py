@@ -538,7 +538,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 p_id = db["categories"][cat_id]["parent_id"]
                 buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"admin_store_{p_id}")])
                 
-            await query.edit_message_text(f"⚙️ إدارة الأقسام والمنتجات للقسم الحالي: ({cat_id})", reply_markup=InlineKeyboardMarkup(buttons))
+        await query.edit_message_text(f"⚙️ إدارة الأقسام والمنتجات للقسم الحالي: ({cat_id})", reply_markup=InlineKeyboardMarkup(buttons))
             
         elif data.startswith("ad_add_cat_"):
             pid = data.replace("ad_add_cat_", "")
