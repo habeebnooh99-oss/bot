@@ -540,7 +540,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 
         await query.edit_message_text(f"⚙️ إدارة الأقسام والمنتجات للقسم الحالي: ({cat_id})", reply_markup=InlineKeyboardMarkup(buttons))
             
-    elif data.startswith("ad_add_cat_"):
+        elif data.startswith("ad_add_cat_"):
             pid = data.replace("ad_add_cat_", "")
             USER_STATES[user_id] = {"action": "admin_wait_cat_name", "parent_id": pid}
             await context.bot.send_message(chat_id=ADMIN_ID, text="📝 أرسل اسم القسم الجديد المراد إنشاؤه:")
