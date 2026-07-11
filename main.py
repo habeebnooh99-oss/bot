@@ -619,6 +619,43 @@ def main():
 
     # تشغيل مستمر دون انقطاع
     application.run_polling()
+    async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # التأكد أن الشخص الذي يستخدم الأمر هو الأدمن فقط
+    if user_id != ADMIN_ID:
+        return
+
+    try:
+        # استخراج البيانات من الأمر
+        target_user_id = int(context.args[0])
+        amount_usd = float(context.args[1])
+        
+        # سعر الصرف الثابت (يمكنك تعديله لاحقاً)
+        exchange_rate = 0.71  # مثال: الدينار مقابل الدولار
+        amount_jod = amount_usd * exchange_rate
+        
+        # تحديث رصيد الزبون في قاعدة البيانات
+        cursor.execute('''UPDATE users 
+                          SET balance_usd = balance_usd + ?, balance_jod = balance_jod + ? 
+                          WHERE id = ?''', (amount_usd, amount_jod, target_user_id))
+        conn.commit()
+        
+        # إرسال تأكيد للأدمن
+        await update.message.reply_text(f"✅ تم إضافة {amount_usd}$ ({amount_jod} JOD) للزبون {target_user_id} بنجاح.")
+        
+        # إرسال رسالة للزبون (اختياري)
+        try:
+            await context.bot.send_message(chat_id=target_user_id, 
+                                           text=f"💰 تم إضافة رصيد لحسابك بقيمة {amount_usd}$ ({amount_jod} JOD).")
+        except:
+            pass # في حال كان الزبون حاظر البوت
+            
+    except (IndexError, ValueError):
+        await update.message.reply_text("⚠️ خطأ في الصيغة. استخدم: /add_balance [ID] [المبلغ]")
+
+# إضافة الأمر للتطبيق
+app.add_handler(CommandHandler("add_balance", add_balance_command))
 
 if __name__ == "__main__":
     main()
