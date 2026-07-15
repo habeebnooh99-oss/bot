@@ -1,624 +1,1235 @@
-import os
-import json
-import logging
-from telegram import (
-    Update, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
-    ReplyKeyboardMarkup, 
-    KeyboardButton
-)
-from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    MessageHandler, 
-    CallbackQueryHandler, 
-    ContextTypes, 
-    filters
-)
+import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.TelegramBotsApi;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.api.objects.Message;
+import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
-# إعداد السجلات (Logging) لتتبع الأخطاء
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-# --- الإعدادات الأساسية والثوابت ---
-TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI"
-ADMIN_ID = 8529336745
-DB_FILE = "database.json"
-USD_TO_JOD = 0.71  # سعر الصرف الافتراضي
+public class AlexCardBot extends TelegramLongPollingBot {
 
-# --- إدارة قاعدة البيانات (JSON) ---
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            pass
-    return {
-        "users": {},        # id: {name, balance_usd, discount}
-        "categories": {},   # id: {name, parent_id, sub_categories: [], products: []}
-        "products": {},     # id: {name, description, price_usd, parent_id}
-        "orders": {},       # id: {user_id, type: 'buy'/'charge', details, status}
-        "profit_margin": 0.0 # نسبة الربح العامة (مثال: 0.04 تعني 4%)
+    private static final String BOT_TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI";
+    private static final String BOT_USERNAME = "ALEX CARD";
+    private static final long ADMIN_ID = 8529336745L;
+    private static final String DB_URL = "jdbc:sqlite:alexcard.db";
+
+    // لحفظ حالة المحادثة لكل مستخدم (FSM)
+    private static final Map<Long, UserState> userStates = new HashMap<>();
+    private static final Map<Long, String> tempInputs = new HashMap<>();
+
+    public static void main(String[] args) {
+        try {
+            initDatabase();
+            TelegramBotsApi botsApi = new TelegramBotsApi(DefaultBotSession.class);
+            botsApi.registerBot(new AlexCardBot());
+            System.out.println("🤖 Bot is successfully running!");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
-def save_db(db_data):
-    with open(DB_FILE, 'w', encoding='utf-8') as f:
-        json.dump(db_data, f, ensure_ascii=False, indent=4)
+    @Override
+    public String getBotUsername() {
+        return BOT_USERNAME;
+    }
 
-db = load_db()
+    @Override
+    public String getBotToken() {
+        return BOT_TOKEN;
+    }
 
-# مساعدة في تتبع الحالات المؤقتة للمستخدمين أثناء المحادثة (FSM يدوي بسيط)
-USER_STATES = {}
+    // --- حالة المستخدمين المؤقتة ---
+    enum UserState {
+        NONE,
+        WAITING_PRODUCT_INFO, // زبون: يرسل معلومات الشراء
+        WAITING_ORANGE_MONEY, // زبون: يرسل نص تحويل أورنج موني
+        WAITING_ADMIN_REJECT_REASON, // أدمن: سبب الرفض
+        WAITING_ADMIN_ADD_BALANCE, // أدمن: كتابة الرصيد المراد إضافته
+        WAITING_ADMIN_CAT_NAME, // أدمن: إضافة قسم
+        WAITING_ADMIN_PROD_NAME, // أدمن: اسم المنتج
+        WAITING_ADMIN_PROD_DESC, // أدمن: وصف المنتج
+        WAITING_ADMIN_PROD_PRICE_JOD, // أدمن: سعر المنتج دينار
+        WAITING_ADMIN_PROD_PRICE_USD, // أدمن: سعر المنتج دولار
+        WAITING_BROADCAST_ALL, // أدمن: إعلان للكل
+        WAITING_BROADCAST_ID, // أدمن: ايدي مستهدف للإعلان
+        WAITING_BROADCAST_TARGET_MSG, // أدمن: رسالة الإعلان للشخص المحدد
+        WAITING_DISCOUNT_ID, // أدمن: ايدي الزبون للخصم
+        WAITING_DISCOUNT_PERCENT // أدمن: نسبة الخصم
+    }
 
-# --- دالات مساعدة للحسابات والأسعار ---
-def calculate_prices(product_price_usd, user_discount_pct):
-    # إضافة نسبة الربح أولاً
-    price_with_profit = product_price_usd * (1 + db.get("profit_margin", 0.0))
-    # تطبيق خصم الزبون الخاص
-    final_usd = price_with_profit * (1 - (user_discount_pct / 100.0))
-    final_jod = final_usd * USD_TO_JOD
-    return round(final_usd, 2), round(final_jod, 2)
-
-# --- أزرار الكيبورد الرئيسية ---
-def get_main_keyboard(user_id):
-    keyboard = [
-        [KeyboardButton("🏪 المتجر"), KeyboardButton("👤 حسابي")],
-        [KeyboardButton("📦 طلباتي"), KeyboardButton("💰 شحن الرصيد")],
-        [KeyboardButton("📞 الدعم الفني")]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append([KeyboardButton("👑 لوحة التحكم للآدمن")])
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-# --- بدء تشغيل البوت ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    u_id = str(user.id)
-    
-    # تسجيل الزبون إن لم يكن مسجلاً
-    if u_id not in db["users"]:
-        db["users"][u_id] = {
-            "name": user.full_name,
-            "balance_usd": 0.0,
-            "discount": 0.0
-        }
-        save_db(db)
-        
-    await update.message.reply_text(
-        f"👋 أهلاً بك في بوت *ALEX CARD* المتميز.\nيسعدنا خدمتك! اختر قسماً من القائمة بالأسفل.",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(user.id)
-    )
-
-# --- معالجة الرسائل النصية وقوائم الأزرار التفاعلية ---
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
-    u_id = str(user_id)
-    
-    # تأمين تسجيل الزبون
-    if u_id not in db["users"]:
-        db["users"][u_id] = {"name": update.effective_user.full_name, "balance_usd": 0.0, "discount": 0.0}
-        save_db(db)
-
-    # 1. قائمة المتجر للزبون
-    if text == "🏪 المتجر":
-        USER_STATES[user_id] = {}
-        await show_store_category(update, context, "root")
-        return
-
-    # 2. حسابي
-    elif text == "👤 حسابي":
-        u_data = db["users"][u_id]
-        bal_usd = u_data["balance_usd"]
-        bal_jod = round(bal_usd * USD_TO_JOD, 2)
-        disc = u_data["discount"]
-        msg = (
-            f"👤 *معلومات حسابك الخاص:*\n\n"
-            f"🆔 الآيدي الخاص بك: `{u_id}`\n"
-            f"👤 الاسم: *{u_data['name']}*\n"
-            f"💰 الرصيد بالدولار: `${bal_usd}`\n"
-            f"🇯🇴 الرصيد بالدينار: `{bal_jod} JOD`\n"
-            f"📉 نسبة خصمك الخاصة: %{disc}"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-        return
-
-    # 3. طلباتي
-    elif text == "📦 طلباتي":
-        user_orders = [o_id for o_id, o in db["orders"].items() if str(o["user_id"]) == u_id and o["status"] == "pending"]
-        if not user_orders:
-            await update.message.reply_text("📭 ليس لديك أي طلبات قيد المراجعة حالياً.")
-        else:
-            msg = "⏳ *طلباتك قيد المراجعة والتدقيق:*\n\n"
-            for o_id in user_orders:
-                o = db["orders"][o_id]
-                msg += f"📋 رقم الطلب: `{o_id}`\n🔹 التفاصيل: {o['details']}\n-------------------------\n"
-            await update.message.reply_text(msg, parse_mode="Markdown")
-        return
-
-    # 4. شحن الرصيد
-    elif text == "💰 شحن الرصيد":
-        keyboard = [
-            [InlineKeyboardButton("🇯🇴 أورنج موني (الأردن)", callback_data="charge_orange")],
-            [InlineKeyboardButton("🌍 شحن لجميع الدول العربية والأجنبية", callback_data="charge_global")]
-        ]
-        await update.message.reply_text("⚡️ يرجى اختيار وسيلة الشحن المناسبة لك:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    # 5. الدعم الفني
-    elif text == "📞 الدعم الفني":
-        msg = (
-            "📌 *قسم الدعم الفني وخدمة العملاء:*\n\n"
-            "🟢 واتساب: +962776445110\n"
-            "🔵 تليجرام: @htb1b\n\n"
-            "تواصل معنا في أي وقت، نحن هنا لمساعدتك!"
-        )
-        await update.message.reply_text(msg)
-        return
-
-    # 6. لوحة تحكم الآدمن
-    elif text == "👑 لوحة التحكم للآدمن" and user_id == ADMIN_ID:
-        keyboard = [
-            [InlineKeyboardButton("🏪 إدارة أقسام ومتجر البوت", callback_data="admin_store_root")],
-            [InlineKeyboardButton("👥 قائمة ومراقبة الزبائن", callback_data="admin_users")],
-            [InlineKeyboardButton("📢 إرسال إعلان (جماعي / خاص)", callback_data="admin_broadcast")],
-            [InlineKeyboardButton("📉 إدارة الخصومات المخصصة", callback_data="admin_discounts")],
-            [InlineKeyboardButton("📈 تعيين نسبة الربح العامة", callback_data="admin_profit")]
-        ]
-        await update.message.reply_text("⚙️ *مرحباً بك في لوحة تحكم الآدمن الحصرية:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    # --- معالجة المدخلات النصية التشعبية (انتظار ردود مستخدم أو آدمن) ---
-    state = USER_STATES.get(user_id, {})
-    action = state.get("action")
-
-    if action == "wait_info_buy":
-        p_id = state["prod_id"]
-        prod = db["products"][p_id]
-        u_disc = db["users"][u_id]["discount"]
-        final_usd, final_jod = calculate_prices(prod["price_usd"], u_disc)
-        
-        # التأكد من الرصيد أولاً
-        if db["users"][u_id]["balance_usd"] < final_usd:
-            await update.message.reply_text("❌ رصيدك الحالي غير كافي لإتمام هذه العملية! يرجى شحن حسابك أولاً.")
-            USER_STATES[user_id] = {}
-            return
+    // --- إعداد قاعدة البيانات ---
+    private static void initDatabase() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             Statement stmt = conn.createStatement()) {
             
-        o_id = str(len(db["orders"]) + 1001)
-        db["orders"][o_id] = {
-            "user_id": user_id,
-            "type": "buy",
-            "prod_id": p_id,
-            "details": f"شراء منتج: {prod['name']} | معلومات العميل: {text}",
-            "status": "pending",
-            "cost_usd": final_usd
+            // جدول المستخدمين
+            stmt.execute("CREATE TABLE IF NOT EXISTS users (" +
+                    "chat_id INTEGER PRIMARY KEY, " +
+                    "username TEXT, " +
+                    "balance_jod REAL DEFAULT 0.0, " +
+                    "balance_usd REAL DEFAULT 0.0, " +
+                    "discount REAL DEFAULT 0.0)");
+
+            // جدول الأقسام (دعم متداخل غير محدود)
+            stmt.execute("CREATE TABLE IF NOT EXISTS categories (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "name TEXT, " +
+                    "parent_id INTEGER DEFAULT 0)");
+
+            // جدول المنتجات
+            stmt.execute("CREATE TABLE IF NOT EXISTS products (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "category_id INTEGER, " +
+                    "name TEXT, " +
+                    "description TEXT, " +
+                    "price_jod REAL, " +
+                    "price_usd REAL)");
+
+            // جدول الطلبات
+            stmt.execute("CREATE TABLE IF NOT EXISTS orders (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "user_id INTEGER, " +
+                    "product_id INTEGER, " +
+                    "info TEXT, " +
+                    "status TEXT DEFAULT 'PENDING')");
         }
-        save_db(db)
-        
-        # إرسال إشعار للآدمن
-        admin_keyboard = [
-            [InlineKeyboardButton("✅ قبول الطلب", callback_data=f"approve_buy_{o_id}"),
-             InlineKeyboardButton("❌ رفض الطلب", callback_data=f"reject_buy_{o_id}")]
-        ]
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"🛒 *طلب شراء جديد مروّس برقم* (`{o_id}`):\n\n"
-                 f"👤 العميل: *{update.effective_user.full_name}* (`{u_id}`)\n"
-                 f"📦 المنتج: {prod['name']}\n"
-                 f"💰 السعر النهائي: `${final_usd}` | `{final_jod} JOD`\n"
-                 f"📝 البيانات المرسلة: {text}",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(admin_keyboard)
-        )
-        await update.message.reply_text("⏳ تم إرسال طلبك ومستنداتك بنجاح إلى الإدارة. الطلب الآن تحت المراجعة الفورية.")
-        USER_STATES[user_id] = {}
+    }
 
-    elif action == "wait_orange_text":
-        # طلب شحن الرصيد نصياً
-        o_id = str(len(db["orders"]) + 1001)
-        db["orders"][o_id] = {
-            "user_id": user_id,
-            "type": "charge_text",
-            "details": f"طلب شحن محفظة أورنج موني، نص التحويل: {text}",
-            "status": "pending"
+    @Override
+    public void onUpdateReceived(Update update) {
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            handleTextMessage(update.getMessage());
+        } else if (update.hasCallbackQuery()) {
+            handleCallbackQuery(update.getCallbackQuery());
         }
-        save_db(db)
-        
-        admin_keyboard = [
-            [InlineKeyboardButton("✅ قبول وإدخال الرصيد", callback_data=f"approve_charge_{o_id}"),
-             InlineKeyboardButton("❌ رفض التحويل", callback_data=f"reject_charge_{o_id}")]
-        ]
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"💰 *طلب شحن رصيد جديد (نصي)* (`{o_id}`):\n\n"
-                 f"👤 العميل: *{update.effective_user.full_name}* (`{u_id}`)\n"
-                 f"📄 نص الحوالة المستلم:\n{text}",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(admin_keyboard)
-        )
-        await update.message.reply_text("📥 تم استلام نص الحوالة. يرجى إرسال صورة الحوالة الآن لإكمال الطلب.")
-        USER_STATES[user_id] = {"action": "wait_orange_photo", "order_id": o_id}
+    }
 
-    elif action == "admin_wait_cat_name":
-        p_id = state.get("parent_id", "root")
-        c_id = str(len(db["categories"]) + 500)
-        db["categories"][c_id] = {"name": text, "parent_id": p_id, "sub_categories": [], "products": []}
-        if p_id != "root":
-            db["categories"][p_id]["sub_categories"].append(c_id)
-        save_db(db)
-        await update.message.reply_text(f"✅ تم إضافة القسم الجديد بنجاح: *{text}*", parse_mode="Markdown")
-        USER_STATES[user_id] = {}
+    // --- معالجة الرسائل النصية ---
+    private void handleTextMessage(Message message) {
+        long chatId = message.getChatId();
+        String text = message.getText();
 
-    elif action == "admin_wait_prod_name":
-        c_id = state["cat_id"]
-        USER_STATES[user_id] = {"action": "admin_wait_prod_desc", "cat_id": c_id, "name": text}
-        await update.message.reply_text("📝 ممتاز، الآن أرسل وصفاً تفصيلياً كاملاً للمنتج:")
+        // تسجيل دخول تلقائي للمستخدم
+        registerUser(chatId, message.getFrom().getFirstName());
 
-    elif action == "admin_wait_prod_desc":
-        c_id = state["cat_id"]
-        p_name = state["name"]
-        USER_STATES[user_id] = {"action": "admin_wait_prod_price", "cat_id": c_id, "name": p_name, "desc": text}
-        await update.message.reply_text("💵 حسناً، أرسل سعر المنتج بالدولار الأمريكي كمثال الرقم (10.5):")
-
-    elif action == "admin_wait_prod_price":
-        try:
-            price = float(text)
-        except:
-            await update.message.reply_text("❌ عذراً، يرجى إدخال رقم صحيح وصالح (مثال: 15 أو 20.5):")
-            return
-        c_id = state["cat_id"]
-        p_id = str(len(db["products"]) + 700)
-        db["products"][p_id] = {
-            "name": state["name"],
-            "description": state["desc"],
-            "price_usd": price,
-            "parent_id": c_id
+        if (text.equals("/start")) {
+            userStates.put(chatId, UserState.NONE);
+            sendMainMenu(chatId);
+            return;
         }
-        db["categories"][c_id]["products"].append(p_id)
-        save_db(db)
-        await update.message.reply_text("✅ تم إنشاء المنتج وإضافته للقسم بنجاح تام!")
-        USER_STATES[user_id] = {}
 
-    elif action == "admin_wait_bc_all":
-        count = 0
-        for uid in db["users"].keys():
-            try:
-                await context.bot.send_message(chat_id=int(uid), text=f"📢 *إعلان عام من الإدارة:*\n\n{text}", parse_mode="Markdown")
-                count += 1
-            except:
-                pass
-        await update.message.reply_text(f"📢 تم إرسال الإعلان بنجاح إلى ({count}) مستخدم.")
-        USER_STATES[user_id] = {}
+        UserState state = userStates.getOrDefault(chatId, UserState.NONE);
 
-    elif action == "admin_wait_bc_spec_id":
-        if text not in db["users"]:
-            await update.message.reply_text("❌ هذا الآيدي غير مسجل في البوت إطلاقاً!")
-            return
-        USER_STATES[user_id] = {"action": "admin_wait_bc_spec_msg", "target_id": text}
-        await update.message.reply_text("📝 الآن اكتب رسالة الإعلان الموجهة له حصراً:")
+        // --- معالجة مدخلات الأدمن ---
+        if (chatId == ADMIN_ID) {
+            switch (state) {
+                case WAITING_ADMIN_CAT_NAME:
+                    String parentIdStr = tempInputs.get(chatId);
+                    int parentId = parentIdStr != null ? Integer.parseInt(parentIdStr) : 0;
+                    addCategory(text, parentId);
+                    sendMessage(chatId, "✅ تم إضافة القسم بنجاح!");
+                    userStates.put(chatId, UserState.NONE);
+                    sendMainMenu(chatId);
+                    break;
 
-    elif action == "admin_wait_bc_spec_msg":
-        t_id = state["target_id"]
-        try:
-            await context.bot.send_message(chat_id=int(t_id), text=f"🔔 *رسالة خاصة من الإدارة:*\n\n{text}", parse_mode="Markdown")
-            await update.message.reply_text("✅ تم إرسال الرسالة الخاصة بنجاح.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ فشل الإرسال بسبب: {e}")
-        USER_STATES[user_id] = {}
+                case WAITING_ADMIN_PROD_NAME:
+                    tempInputs.put(chatId, tempInputs.get(chatId) + ":::" + text); // categoryId:::name
+                    sendMessage(chatId, "📝 أرسل وصف المنتج الآن:");
+                    userStates.put(chatId, UserState.WAITING_ADMIN_PROD_DESC);
+                    break;
 
-    elif action == "admin_wait_disc_id":
-        if text not in db["users"]:
-            await update.message.reply_text("❌ آيدي الزبون خاطئ أو غير متوفر.")
-            return
-        USER_STATES[user_id] = {"action": "admin_wait_disc_val", "target_id": text}
-        await update.message.reply_text("📉 أدخل نسبة الخصم المئوية المخصصة له (مثال: 5 لـ 5%):")
+                case WAITING_ADMIN_PROD_DESC:
+                    tempInputs.put(chatId, tempInputs.get(chatId) + ":::" + text); // categoryId:::name:::desc
+                    sendMessage(chatId, "💰 أرسل سعر المنتج بالدينار الأردني (JOD) - رقم فقط:");
+                    userStates.put(chatId, UserState.WAITING_ADMIN_PROD_PRICE_JOD);
+                    break;
 
-    elif action == "admin_wait_disc_val":
-        try:
-            val = float(text)
-        except:
-            await update.message.reply_text("❌ يرجى إدخال رقم صحيح:")
-            return
-        t_id = state["target_id"]
-        db["users"][t_id]["discount"] = val
-        save_db(db)
-        await update.message.reply_text(f"✅ تم تطبيق خصم ثابت بنسبة %{val} للزبون رقم `{t_id}`.")
-        USER_STATES[user_id] = {}
+                case WAITING_ADMIN_PROD_PRICE_JOD:
+                    tempInputs.put(chatId, tempInputs.get(chatId) + ":::" + text); // categoryId:::name:::desc:::priceJod
+                    sendMessage(chatId, "💵 أرسل سعر المنتج بالدولار (USD) - رقم فقط:");
+                    userStates.put(chatId, UserState.WAITING_ADMIN_PROD_PRICE_USD);
+                    break;
 
-    elif action == "admin_wait_profit":
-        try:
-            val = float(text)
-        except:
-            await update.message.reply_text("❌ أدخل رقم صحيح لنسبة الربح:")
-            return
-        db["profit_margin"] = val / 100.0
-        save_db(db)
-        await update.message.reply_text(f"✅ تم تعديل نسبة الربح العامة لتصبح %{val} على جميع منتجات المتجر تلقائياً.")
-        USER_STATES[user_id] = {}
+                case WAITING_ADMIN_PROD_PRICE_USD:
+                    String[] parts = tempInputs.get(chatId).split(":::");
+                    int catId = Integer.parseInt(parts[0]);
+                    String prodName = parts[1];
+                    String desc = parts[2];
+                    double jPrice = Double.parseDouble(parts[3]);
+                    double uPrice = Double.parseDouble(text);
+                    addProduct(catId, prodName, desc, jPrice, uPrice);
+                    sendMessage(chatId, "✅ تم إضافة المنتج بنجاح بنجاح!");
+                    userStates.put(chatId, UserState.NONE);
+                    sendMainMenu(chatId);
+                    break;
 
-    elif action == "admin_wait_charge_amount":
-        try:
-            amount = float(text)
-        except:
-            await update.message.reply_text("❌ أدخل قيمة رصيد صحيحة بالرقم:")
-            return
-        o_id = state["order_id"]
-        o = db["orders"][o_id]
-        t_uid = str(o["user_id"])
-        
-        db["users"][t_uid]["balance_usd"] += amount
-        o["status"] = "approved"
-        save_db(db)
-        
-        # إشعار العميل
-        amount_jod = round(amount * USD_TO_JOD, 2)
-        try:
-            await context.bot.send_message(
-                chat_id=int(t_uid),
-                text=f"✅ *تمت الموافقة على شحن رصيدك بنجاح!*\n\n"
-                     f"📥 الرصيد المضاف: `${amount}` | `{amount_jod} JOD`\n"
-                     f"💰 رصيدك الكلي الحالي: `${db['users'][t_uid]['balance_usd']}`",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-        await update.message.reply_text("✅ تم إضافة الرصيد إلى محفظة الزبون وإخطاره في الحين.")
-        USER_STATES[user_id] = {}
+                case WAITING_ADMIN_ADD_BALANCE:
+                    String[] chargeParts = tempInputs.get(chatId).split(":::");
+                    long targetUser = Long.parseLong(chargeParts[0]);
+                    int orderId = Integer.parseInt(chargeParts[1]);
+                    try {
+                        double amountUsd = Double.parseDouble(text);
+                        double amountJod = amountUsd * 0.71; // تقريب سعر الصرف المعتمد
+                        updateUserBalance(targetUser, amountJod, amountUsd);
+                        updateOrderStatus(orderId, "ACCEPTED");
+                        sendMessage(chatId, "✅ تم شحن رصيد المستخدم بنجاح بقيمة " + amountUsd + " $");
+                        sendMessage(targetUser, "🎉 تم قبول طلب الشحن وإضافة رصيد لحسابك بقيمة: " + amountUsd + " $ (" + amountJod + " د.أ)");
+                    } catch (NumberFormatException e) {
+                        sendMessage(chatId, "⚠️ يرجى إدخال رقم صحيح.");
+                    }
+                    userStates.put(chatId, UserState.NONE);
+                    break;
 
-# --- معالجة الصور المرسلة لشحن الرصيد ---
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    state = USER_STATES.get(user_id, {})
-    
-    if state.get("action") == "wait_orange_photo":
-        o_id = state["order_id"]
-        photo_id = update.message.photo[-1].file_id
-        
-        # إعادة توجيه الصورة للآدمن
-        await context.bot.send_photo(
-            chat_id=ADMIN_ID,
-            photo=photo_id,
-            caption=f"📸 *صورة إيصال التحويل التابعة للطلب رقم:* (`{o_id}`)",
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ تم إرسال الصورة للإدارة للتحقق الجنائي والمالي من التحويل والموافقة.")
-        USER_STATES[user_id] = {}
+                case WAITING_BROADCAST_ALL:
+                    broadcastToAll(text);
+                    sendMessage(chatId, "✅ تم إرسال الإعلان لجميع المشتركين!");
+                    userStates.put(chatId, UserState.NONE);
+                    break;
 
-# --- عرض أقسام المتجر للزبائن ---
-async def show_store_category(update: Update, context: ContextTypes.DEFAULT_TYPE, cat_id: str, query=None):
-    u_id = str(update.effective_user.id)
-    u_disc = db["users"][u_id]["discount"]
-    
-    buttons = []
-    
-    # جلب الأقسام الفرعية التابعة للقسم الحالي
-    sub_cats = [c_id for c_id, c in db["categories"].items() if c["parent_id"] == cat_id]
-    for sc_id in sub_cats:
-        buttons.append([InlineKeyboardButton(f"📁 {db['categories'][sc_id]['name']}", callback_data=f"view_cat_{sc_id}")])
-        
-    # جلب المنتجات التابعة للقسم الحالي
-    prods = [p_id for p_id, p in db["products"].items() if p["parent_id"] == cat_id]
-    for p_id in prods:
-        p = db["products"][p_id]
-        f_usd, f_jod = calculate_prices(p["price_usd"], u_disc)
-        buttons.append([InlineKeyboardButton(f"🛍️ {p['name']} - (${f_usd} / {f_jod} JOD)", callback_data=f"view_prod_{p_id}")])
-        
-    # إضافة زر الرجوع السلس
-    if cat_id != "root":
-        p_id = db["categories"][cat_id]["parent_id"]
-        buttons.append([InlineKeyboardButton("🔙 العودة للخلف", callback_data=f"view_cat_{p_id}")])
-        
-    text = "🏪 *قائمة المتجر - تصفح الأقسام المتاحة:*"
-    if cat_id != "root":
-        text = f"📁 القسم: *{db['categories'][cat_id]['name']}*"
-        
-    if query:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+                case WAITING_BROADCAST_ID:
+                    tempInputs.put(chatId, text); // حفظ آيدي المستهدف
+                    sendMessage(chatId, "💬 أرسل محتوى الرسالة الآن لتبليغه بها:");
+                    userStates.put(chatId, UserState.WAITING_BROADCAST_TARGET_MSG);
+                    break;
 
-# --- معالجة الضغط على الأزرار المضمنة (Callback Query) ---
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = query.from_user.id
-    u_id = str(user_id)
-    
-    # تصفح الأقسام والمنتجات للزبون
-    if data.startswith("view_cat_"):
-        cid = data.replace("view_cat_", "")
-        await show_store_category(update, context, cid, query=query)
-        
-    elif data.startswith("view_prod_"):
-        pid = data.replace("view_prod_", "")
-        prod = db["products"][pid]
-        u_disc = db["users"][u_id]["discount"]
-        f_usd, f_jod = calculate_prices(prod["price_usd"], u_disc)
-        
-        msg = (
-            f"📦 *اسم المنتج:* {prod['name']}\n\n"
-            f"📝 *وصف المنتج:*\n{prod['description']}\n\n"
-            f"💰 *السعر النهائي بالدولار:* `${f_usd}`\n"
-            f"🇯🇴 *السعر النهائي بالدينار:* `{f_jod} JOD`\n\n"
-            f"⚠️ لشراء المنتج، اضغط على زر الشراء بالأسفل لتأكيد المعطيات."
-        )
-        buttons = [
-            [InlineKeyboardButton("🛒 شراء المنتج الآن", callback_data=f"buy_now_{pid}")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data=f"view_cat_{prod['parent_id']}")]
-        ]
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
-        
-    elif data.startswith("buy_now_"):
-        pid = data.replace("buy_now_", "")
-        USER_STATES[user_id] = {"action": "wait_info_buy", "prod_id": pid}
-        await context.bot.send_message(chat_id=user_id, text="📝 * (أقراء الوصف لمعرفة ماذا ترسل ) يرجى كتابة وإرسال المعلومات اللازمة المطلوبة لتسليمك المنتج فوراً:*")
+                case WAITING_BROADCAST_TARGET_MSG:
+                    long targetId = Long.parseLong(tempInputs.get(chatId));
+                    sendMessage(targetId, "📢 رسالة من الإدارة:\n\n" + text);
+                    sendMessage(chatId, "✅ تم إرسال الرسالة إلى العضو بنجاح.");
+                    userStates.put(chatId, UserState.NONE);
+                    break;
 
-    # نظام الشحن للزبون
-    elif data == "charge_orange":
-        msg = (
-            f"🇯🇴 *معلومات تحويل محفظة أورنج موني:*\n\n"
-            f"📱 رقم المحفظة: `0776445110`\n"
-            f"💼 نوع المحفظة: أورنج موني\n"
-            f"👤 اسم صاحب المحفظة: *SALMAN NOUH SALMAN AL-BADAREEN*\n\n"
-            f"📥 بعد قيامك بالتحويل، يرجى كتابة وإرسال *الاسم الرباعي او الثلاثي لصاحب المحفظة ومبلغ الذي حولته بنفس الرسالة* ، بالرد على هذه الرسالة مباشرة:"
-        )
-        USER_STATES[user_id] = {"action": "wait_orange_text"}
-        await query.edit_message_text(msg, parse_mode="Markdown")
-        
-    elif data == "charge_global":
-        msg = (
-            "🌍 *شحن الرصيد لجميع الدول العربية والأجنبية:*\n\n"
-            "نوفر طرق دفع متعددة ومتنوعة تناسب بلدك المقيم به (سواء كنت في سوريا، مصر، العراق، أو أي دولة أخرى).\n\n"
-            "💬 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً:\n"
-            "✈️ تليجرام الإدارة: @htb1b"
-        )
-        await query.edit_message_text(msg)
+                case WAITING_DISCOUNT_ID:
+                    tempInputs.put(chatId, text); // حفظ آيدي الزبون للخصم
+                    sendMessage(chatId, "📉 أرسل نسبة الخصم المئوية (مثال: 10 للخصم 10%):");
+                    userStates.put(chatId, UserState.WAITING_DISCOUNT_PERCENT);
+                    break;
 
-    # --- عمليات لوحة تحكم الآدمن ---
-    elif user_id == ADMIN_ID:
-        if data.startswith("admin_store_"):
-            cat_id = data.replace("admin_store_", "")
-            buttons = [
-                [InlineKeyboardButton("➕ إضافة قسم فرعي هنا", callback_data=f"ad_add_cat_{cat_id}")],
-                [InlineKeyboardButton("➕ إضافة منتج داخل هذا القسم", callback_data=f"ad_add_prod_{cat_id}")]
-            ]
-            
-            sub_cats = [c_id for c_id, c in db["categories"].items() if c["parent_id"] == cat_id]
-            for sc_id in sub_cats:
-                buttons.append([
-                    InlineKeyboardButton(f"📁 {db['categories'][sc_id]['name']}", callback_data=f"admin_store_{sc_id}"),
-                    InlineKeyboardButton("❌ حذف", callback_data=f"ad_del_cat_{sc_id}")
-                ])
+                case WAITING_DISCOUNT_PERCENT:
+                    long dUserId = Long.parseLong(tempInputs.get(chatId));
+                    double discVal = Double.parseDouble(text);
+                    updateUserDiscount(dUserId, discVal);
+                    sendMessage(chatId, "✅ تم تعيين نسبة خصم بقيمة " + discVal + "% للمستخدم بنجاح.");
+                    sendMessage(dUserId, "🎁 لقد منحتك الإدارة خصماً خاصاً بنسبة: " + discVal + "% على كافة خدماتنا!");
+                    userStates.put(chatId, UserState.NONE);
+                    break;
+            }
+        }
+
+        // --- معالجة مدخلات الزبون ---
+        if (chatId != ADMIN_ID || state == UserState.WAITING_PRODUCT_INFO || state == UserState.WAITING_ORANGE_MONEY) {
+            switch (state) {
+                case WAITING_PRODUCT_INFO:
+                    String[] buyParts = tempInputs.get(chatId).split(":::");
+                    int prodId = Integer.parseInt(buyParts[0]);
+                    int dbOrderId = createOrder(chatId, prodId, text);
+                    
+                    sendMessage(chatId, "⏳ تم إرسال طلب الشراء للإدارة بنجاح وهو تحت المراجعة حالياً.");
+                    
+                    // إشعار للأدمن
+                    String adminMsg = "📦 *طلب شراء جديد!*\n" +
+                            "👤 العميل: ` " + chatId + " `\n" +
+                            "🛍️ المنتج: " + getProductName(prodId) + "\n" +
+                            "📝 البيانات المرسلة: \n" + text;
+                    
+                    InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+                    List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+                    List<InlineKeyboardButton> row = new ArrayList<>();
+                    
+                    InlineKeyboardButton accBtn = new InlineKeyboardButton("✅ قبول الطلب");
+                    accBtn.setCallbackData("ADMIN_ACCEPT_PROD_" + dbOrderId + "_" + chatId + "_" + prodId);
+                    InlineKeyboardButton rejBtn = new InlineKeyboardButton("❌ رفض الطلب");
+                    rejBtn.setCallbackData("ADMIN_REJECT_PROD_" + dbOrderId + "_" + chatId);
+                    
+                    row.add(accBtn);
+                    row.add(rejBtn);
+                    rows.add(row);
+                    markup.setKeyboard(rows);
+                    
+                    sendAdminMessageWithMarkup(adminMsg, markup);
+                    userStates.put(chatId, UserState.NONE);
+                    break;
+
+                case WAITING_ORANGE_MONEY:
+                    int rechargeOrderId = createRechargeRequest(chatId, text);
+                    sendMessage(chatId, "⏳ تم إرسال نص التحويل للإدارة بنجاح. سيتم مراجعته وشحن حسابك فوراً.");
+                    
+                    String rAdminMsg = "💰 *طلب شحن رصيد أورنج موني!*\n" +
+                            "👤 العميل: ` " + chatId + " `\n" +
+                            "📄 نص الحوالة المستلم:\n" + text;
+                    
+                    InlineKeyboardMarkup rMarkup = new InlineKeyboardMarkup();
+                    List<List<InlineKeyboardButton>> rRows = new ArrayList<>();
+                    List<InlineKeyboardButton> rRow = new ArrayList<>();
+                    
+                    InlineKeyboardButton rAccBtn = new InlineKeyboardButton("✅ قبول وشحن");
+                    rAccBtn.setCallbackData("ADMIN_ACCEPT_CHARGE_" + rechargeOrderId + "_" + chatId);
+                    InlineKeyboardButton rRejBtn = new InlineKeyboardButton("❌ رفض");
+                    rRejBtn.setCallbackData("ADMIN_REJECT_CHARGE_" + rechargeOrderId + "_" + chatId);
+                    
+                    rRow.add(rAccBtn);
+                    rRow.add(rRejBtn);
+                    rRows.add(rRow);
+                    rMarkup.setKeyboard(rRows);
+                    
+                    sendAdminMessageWithMarkup(rAdminMsg, rMarkup);
+                    userStates.put(chatId, UserState.NONE);
+                    break;
+            }
+        }
+    }
+
+    // --- معالجة نقرات الأزرار ---
+    private void handleCallbackQuery(CallbackQuery callbackQuery) {
+        long chatId = callbackQuery.getMessage().getChatId();
+        String data = callbackQuery.getData();
+        int messageId = callbackQuery.getMessage().getMessageId();
+
+        if (data.equals("MENU_STORE")) {
+            showCategoriesMenu(chatId, 0, messageId);
+        } else if (data.startsWith("VIEW_CAT_")) {
+            int catId = Integer.parseInt(data.substring(9));
+            showCategoriesMenu(chatId, catId, messageId);
+        } else if (data.startsWith("VIEW_PROD_")) {
+            int prodId = Integer.parseInt(data.substring(10));
+            showProductDetails(chatId, prodId, messageId);
+        } else if (data.startsWith("BUY_PROD_")) {
+            int prodId = Integer.parseInt(data.substring(9));
+            tempInputs.put(chatId, String.valueOf(prodId));
+            editMessage(chatId, messageId, "📥 يرجى إرسال المعلومات المطلوبة لإتمام عملية الشراء:");
+            userStates.put(chatId, UserState.WAITING_PRODUCT_INFO);
+        } else if (data.equals("MENU_MY_ACCOUNT")) {
+            showMyAccount(chatId, messageId);
+        } else if (data.equals("MENU_MY_ORDERS")) {
+            showMyOrders(chatId, messageId);
+        } else if (data.equals("MENU_RECHARGE")) {
+            showRechargeMenu(chatId, messageId);
+        } else if (data.equals("RECHARGE_ORANGE")) {
+            showOrangeMoneyDetails(chatId, messageId);
+        } else if (data.equals("RECHARGE_ALL")) {
+            showAllCountriesDetails(chatId, messageId);
+        } else if (data.equals("MENU_SUPPORT")) {
+            showSupportDetails(chatId, messageId);
+        } else if (data.equals("BACK_TO_MAIN")) {
+            userStates.put(chatId, UserState.NONE);
+            showMainMenuBack(chatId, messageId);
+        }
+
+        // --- أزرار الإدارة الخاصة بالآدمن ---
+        if (chatId == ADMIN_ID) {
+            if (data.equals("ADMIN_PANEL")) {
+                showAdminPanel(chatId, messageId);
+            } else if (data.startsWith("ADMIN_ADD_CAT_")) {
+                int parentId = Integer.parseInt(data.substring(14));
+                tempInputs.put(chatId, String.valueOf(parentId));
+                editMessage(chatId, messageId, "➕ أرسل الآن اسم القسم الجديد لإنشائه:");
+                userStates.put(chatId, UserState.WAITING_ADMIN_CAT_NAME);
+            } else if (data.startsWith("ADMIN_ADD_PROD_")) {
+                int catId = Integer.parseInt(data.substring(15));
+                tempInputs.put(chatId, String.valueOf(catId));
+                editMessage(chatId, messageId, "➕ أرسل الآن اسم المنتج الجديد:");
+                userStates.put(chatId, UserState.WAITING_ADMIN_PROD_NAME);
+            } else if (data.startsWith("ADMIN_DEL_CAT_")) {
+                int catId = Integer.parseInt(data.substring(14));
+                deleteCategory(catId);
+                editMessage(chatId, messageId, "❌ تم حذف القسم ومحتوياته بنجاح.");
+            } else if (data.startsWith("ADMIN_DEL_PROD_")) {
+                int prodId = Integer.parseInt(data.substring(15));
+                deleteProduct(prodId);
+                editMessage(chatId, messageId, "❌ تم حذف المنتج بنجاح.");
+            } else if (data.startsWith("ADMIN_ACCEPT_PROD_")) {
+                // ADMIN_ACCEPT_PROD_{orderId}_{userId}_{prodId}
+                String[] parts = data.split("_");
+                int orderId = Integer.parseInt(parts[3]);
+                long userId = Long.parseLong(parts[4]);
+                int prodId = Integer.parseInt(parts[5]);
+                processProductPurchaseAccept(orderId, userId, prodId);
+            } else if (data.startsWith("ADMIN_REJECT_PROD_")) {
+                String[] parts = data.split("_");
+                int orderId = Integer.parseInt(parts[3]);
+                long userId = Long.parseLong(parts[4]);
+                updateOrderStatus(orderId, "REJECTED");
+                sendMessage(userId, "❌ تم رفض طلب الشراء الخاص بك. يرجى التواصل مع الإدارة للتوضيح.");
+                sendMessage(ADMIN_ID, "🛑 تم إرسال إشعار بالرفض للزبون بنجاح.");
+            } else if (data.startsWith("ADMIN_ACCEPT_CHARGE_")) {
+                String[] parts = data.split("_");
+                int orderId = Integer.parseInt(parts[3]);
+                long userId = Long.parseLong(parts[4]);
+                tempInputs.put(ADMIN_ID, userId + ":::" + orderId);
+                sendMessage(ADMIN_ID, "💵 أرسل قيمة الرصيد بالدولار ($) المراد إضافته لحساب العميل:");
+                userStates.put(ADMIN_ID, UserState.WAITING_ADMIN_ADD_BALANCE);
+            } else if (data.startsWith("ADMIN_REJECT_CHARGE_")) {
+                String[] parts = data.split("_");
+                int orderId = Integer.parseInt(parts[3]);
+                long userId = Long.parseLong(parts[4]);
+                updateOrderStatus(orderId, "REJECTED");
+                sendMessage(userId, "❌ تم رفض طلب شحن الرصيد. يرجى الاتصال بالدعم الفني.");
+                sendMessage(ADMIN_ID, "🛑 تم رفض طلب الشحن وإعلام العميل.");
+            } else if (data.equals("ADMIN_USER_LIST")) {
+                showUsersList(chatId, messageId);
+            } else if (data.equals("ADMIN_BROADCAST_MENU")) {
+                showBroadcastMenu(chatId, messageId);
+            } else if (data.equals("BROADCAST_ALL")) {
+                editMessage(chatId, messageId, "📢 أرسل نص الإعلان الذي ترغب بنشره لجميع مستخدمي البوت:");
+                userStates.put(chatId, UserState.WAITING_BROADCAST_ALL);
+            } else if (data.equals("BROADCAST_SPECIFIC")) {
+                editMessage(chatId, messageId, "🆔 أرسل الـ ID الخاص بالمستخدم المستهدف بالرسالة أولاً:");
+                userStates.put(chatId, UserState.WAITING_BROADCAST_ID);
+            } else if (data.equals("ADMIN_DISCOUNT_MENU")) {
+                editMessage(chatId, messageId, "🆔 أرسل الـ ID للزبون المراد منحه الخصم المخصص:");
+                userStates.put(chatId, UserState.WAITING_DISCOUNT_ID);
+            }
+        }
+    }
+
+    // --- عرض القائمة الرئيسية ---
+    private void sendMainMenu(long chatId) {
+        SendMessage sm = new SendMessage();
+        sm.setChatId(String.valueOf(chatId));
+        sm.setText("👋 مرحباً بك في بوت *" + BOT_USERNAME + "* للتجارة الرقمية!\nاستخدم الأزرار أدناه للتنقل بسلاسة:");
+        sm.setParseMode("Markdown");
+        sm.setReplyMarkup(getMainMenuMarkup(chatId));
+        try {
+            execute(sm);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showMainMenuBack(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setText("👋 مرحباً بك في بوت *" + BOT_USERNAME + "* للتجارة الرقمية!\nاستخدم الأزرار أدناه للتنقل بسلاسة:");
+        em.setParseMode("Markdown");
+        em.setReplyMarkup(getMainMenuMarkup(chatId));
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private InlineKeyboardMarkup getMainMenuMarkup(long chatId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        List<InlineKeyboardButton> r1 = new ArrayList<>();
+        InlineKeyboardButton btnStore = new InlineKeyboardButton("🛍️ المتجر");
+        btnStore.setCallbackData("MENU_STORE");
+        r1.add(btnStore);
+
+        List<InlineKeyboardButton> r2 = new ArrayList<>();
+        InlineKeyboardButton btnAcc = new InlineKeyboardButton("👤 حسابي");
+        btnAcc.setCallbackData("MENU_MY_ACCOUNT");
+        InlineKeyboardButton btnOrders = new InlineKeyboardButton("📦 طلباتي");
+        btnOrders.setCallbackData("MENU_MY_ORDERS");
+        r2.add(btnAcc);
+        r2.add(btnOrders);
+
+        List<InlineKeyboardButton> r3 = new ArrayList<>();
+        InlineKeyboardButton btnRecharge = new InlineKeyboardButton("💳 شحن الرصيد");
+        btnRecharge.setCallbackData("MENU_RECHARGE");
+        InlineKeyboardButton btnSupport = new InlineKeyboardButton("🛠️ الدعم الفني");
+        btnSupport.setCallbackData("MENU_SUPPORT");
+        r3.add(btnRecharge);
+        r3.add(btnSupport);
+
+        rows.add(r1);
+        rows.add(r2);
+        rows.add(r3);
+
+        // إذا كان المطور هو الأدمن
+        if (chatId == ADMIN_ID) {
+            List<InlineKeyboardButton> rAdmin = new ArrayList<>();
+            InlineKeyboardButton btnAdmin = new InlineKeyboardButton("⚙️ لوحة الإدارة (الآدمن)");
+            btnAdmin.setCallbackData("ADMIN_PANEL");
+            rAdmin.add(btnAdmin);
+            rows.add(rAdmin);
+        }
+
+        markup.setKeyboard(rows);
+        return markup;
+    }
+
+    // --- شاشات وأقسام المتجر ---
+    private void showCategoriesMenu(long chatId, int parentId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setText("📂 *الأقسام المتاحة حالياً:*\nاختر تصفح الأقسام أو حدد منتجاً للشراء:");
+        em.setParseMode("Markdown");
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        // جلب الأقسام المتفرعة من الـ parentId الحالي
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT * FROM categories WHERE parent_id = ?")) {
+            ps.setInt(1, parentId);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                List<InlineKeyboardButton> row = new ArrayList<>();
+                InlineKeyboardButton btn = new InlineKeyboardButton("📁 " + rs.getString("name"));
+                btn.setCallbackData("VIEW_CAT_" + rs.getInt("id"));
+                row.add(btn);
                 
-            prods = [p_id for p_id, p in db["products"].items() if p["parent_id"] == cat_id]
-            for p_id in prods:
-                buttons.append([
-                    InlineKeyboardButton(f"🛍️ {db['products'][p_id]['name']}", callback_data="none"),
-                    InlineKeyboardButton("❌ حذف", callback_data=f"ad_del_prod_{p_id}")
-                ])
+                // إذا كان آدمن، إمكانية حذف القسم
+                if (chatId == ADMIN_ID) {
+                    InlineKeyboardButton delBtn = new InlineKeyboardButton("❌");
+                    delBtn.setCallbackData("ADMIN_DEL_CAT_" + rs.getInt("id"));
+                    row.add(delBtn);
+                }
+                rows.add(row);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        // جلب المنتجات التابعة للقسم الحالي
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT * FROM products WHERE category_id = ?")) {
+            ps.setInt(1, parentId);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                List<InlineKeyboardButton> row = new ArrayList<>();
+                InlineKeyboardButton btn = new InlineKeyboardButton("🎮 " + rs.getString("name") + " (" + rs.getDouble("price_usd") + "$)");
+                btn.setCallbackData("VIEW_PROD_" + rs.getInt("id"));
+                row.add(btn);
+
+                if (chatId == ADMIN_ID) {
+                    InlineKeyboardButton delBtn = new InlineKeyboardButton("❌");
+                    delBtn.setCallbackData("ADMIN_DEL_PROD_" + rs.getInt("id"));
+                    row.add(delBtn);
+                }
+                rows.add(row);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        // أزرار التحكم والرجوع للآدمن لإضافة المحتوى مباشرة في هذا القسم
+        if (chatId == ADMIN_ID) {
+            List<InlineKeyboardButton> adminRow = new ArrayList<>();
+            InlineKeyboardButton addCat = new InlineKeyboardButton("➕ إضافة قسم فرعي");
+            addCat.setCallbackData("ADMIN_ADD_CAT_" + parentId);
+            InlineKeyboardButton addProd = new InlineKeyboardButton("➕ إضافة منتج");
+            addProd.setCallbackData("ADMIN_ADD_PROD_" + parentId);
+            adminRow.add(addCat);
+            adminRow.add(addProd);
+            rows.add(adminRow);
+        }
+
+        // زر الرجوع
+        List<InlineKeyboardButton> backRow = new ArrayList<>();
+        InlineKeyboardButton btnBack;
+        if (parentId == 0) {
+            btnBack = new InlineKeyboardButton("🔙 الرجوع للقائمة الرئيسية");
+            btnBack.setCallbackData("BACK_TO_MAIN");
+        } else {
+            int grandpaId = getParentCategoryId(parentId);
+            btnBack = new InlineKeyboardButton("🔙 الرجوع للقسم السابق");
+            btnBack.setCallbackData("VIEW_CAT_" + grandpaId);
+        }
+        backRow.add(btnBack);
+        rows.add(backRow);
+
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showProductDetails(long chatId, int prodId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
+
+        double discountPercent = getUserDiscount(chatId);
+
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT * FROM products WHERE id = ?")) {
+            ps.setInt(1, prodId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                String name = rs.getString("name");
+                String desc = rs.getString("description");
+                double priceJod = rs.getDouble("price_jod");
+                double priceUsd = rs.getDouble("price_usd");
+                int catId = rs.getInt("category_id");
+
+                // حساب الخصومات إذا وجدت للزبون
+                double finalJod = priceJod * (1 - (discountPercent / 100));
+                double finalUsd = priceUsd * (1 - (discountPercent / 100));
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("📦 *").append(name).append("*\n\n");
+                sb.append("📝 *الوصف:* ").append(desc).append("\n\n");
                 
-            if cat_id != "root":
-                p_id = db["categories"][cat_id]["parent_id"]
-                buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"admin_store_{p_id}")])
-                
-            await query.edit_message_text(f"⚙️ إدارة الأقسام والمنتجات للقسم الحالي: ({cat_id})", reply_markup=InlineKeyboardMarkup(buttons))
-            
-        elif data.startswith("ad_add_cat_"):
-            pid = data.replace("ad_add_cat_", "")
-            USER_STATES[user_id] = {"action": "admin_wait_cat_name", "parent_id": pid}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="📝 أرسل اسم القسم الجديد المراد إنشاؤه:")
-            
-        elif data.startswith("ad_add_prod_"):
-            cid = data.replace("ad_add_prod_", "")
-            USER_STATES[user_id] = {"action": "admin_wait_prod_name", "cat_id": cid}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="📝 أرسل اسم المنتج الجديد:")
-            
-        elif data.startswith("ad_del_cat_"):
-            cid = data.replace("ad_del_cat_", "")
-            p_id = db["categories"][cid]["parent_id"]
-            # حذف من الأب
-            if p_id != "root":
-                db["categories"][p_id]["sub_categories"].remove(cid)
-            db["categories"].pop(cid, None)
-            save_db(db)
-            await query.edit_message_text("✅ تم حذف القسم بالكامل نجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحديث", callback_data=f"admin_store_{p_id}")]]))
-            
-        elif data.startswith("ad_del_prod_"):
-            pid = data.replace("ad_del_prod_", "")
-            c_id = db["products"][pid]["parent_id"]
-            db["categories"][c_id]["products"].remove(pid)
-            db["products"].pop(pid, None)
-            save_db(db)
-            await query.edit_message_text("✅ تم حذف المنتج بنجاح من المتجر.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحديث", callback_data=f"admin_store_{c_id}")]]))
+                if (discountPercent > 0) {
+                    sb.append("⚠️ *لديك خصم خاص بقيمة: ").append(discountPercent).append("%*\n");
+                    sb.append("💵 *السعر الأصلي:* ").append(priceJod).append(" د.أ / ").append(priceUsd).append(" $\n");
+                    sb.append("🔥 *السعر بعد الخصم:* `").append(String.format("%.2f", finalJod)).append(" د.أ` / `").append(String.format("%.2f", finalUsd)).append(" $`\n");
+                } else {
+                    sb.append("💵 *السعر المعتمد:* `").append(priceJod).append(" د.أ` / `").append(priceUsd).append(" $`\n");
+                }
 
-        elif data == "admin_users":
-            msg = "👥 *قائمة جميع المشتركين والزبائن في البوت:*\n\n"
-            for uid, u in db["users"].items():
-                b_usd = u["balance_usd"]
-                b_jod = round(b_usd * USD_TO_JOD, 2)
-                msg += f"👤 الاسم: {u['name']}\n🆔 الآيدي: `{uid}`\n💰 الرصيد: `${b_usd}` / `{b_jod} JOD`\n-------------------------\n"
-            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+                em.setText(sb.toString());
 
-        elif data == "admin_broadcast":
-            keyboard = [
-                [InlineKeyboardButton("📢 إرسال للجميع", callback_data="bc_all")],
-                [InlineKeyboardButton("👤 إرسال لشخص محدد", callback_data="bc_spec")]
-            ]
-            await query.edit_message_text("📢 حدد نوع الإعلان المطلوب:", reply_markup=InlineKeyboardMarkup(keyboard))
-            
-        elif data == "bc_all":
-            USER_STATES[user_id] = {"action": "admin_wait_bc_all"}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="📝 اكتب الآن رسالة الإعلان الجماعي ليتم بثها فوراً:")
-            
-        elif data == "bc_spec":
-            USER_STATES[user_id] = {"action": "admin_wait_bc_spec_id"}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="🆔 أرسل آيدي الشخص (Telegram ID) المراد مراسلته بدقة:")
+                InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+                List<List<InlineKeyboardButton>> rows = new ArrayList<>();
 
-        elif data == "admin_discounts":
-            USER_STATES[user_id] = {"action": "admin_wait_disc_id"}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="🆔 أدخل معرف آيدي الزبون المراد عمل خصم مخصص ومستدام له:")
+                List<InlineKeyboardButton> r1 = new ArrayList<>();
+                InlineKeyboardButton buyBtn = new InlineKeyboardButton("💳 شراء الآن");
+                buyBtn.setCallbackData("BUY_PROD_" + prodId);
+                r1.add(buyBtn);
 
-        elif data == "admin_profit":
-            USER_STATES[user_id] = {"action": "admin_wait_profit"}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="📈 أدخل نسبة الربح العامة كأرقام فقط (مثال: ادخل 4 لنسبة 4%):")
+                List<InlineKeyboardButton> r2 = new ArrayList<>();
+                InlineKeyboardButton backBtn = new InlineKeyboardButton("🔙 رجوع");
+                backBtn.setCallbackData("VIEW_CAT_" + catId);
+                r2.add(backBtn);
 
-        # معالجة قرارات الشراء والشحن من الآدمن للطلبات
-        elif data.startswith("approve_buy_"):
-            oid = data.replace("approve_buy_", "")
-            o = db["orders"][oid]
-            t_uid = str(o["user_id"])
-            cost = o["cost_usd"]
-            
-            if db["users"][t_uid]["balance_usd"] >= cost:
-                db["users"][t_uid]["balance_usd"] -= cost
-                o["status"] = "approved"
-                save_db(db)
-                try:
-                    await context.bot.send_message(chat_id=int(t_uid), text=f"🎉 *تم قبول طلب الشراء رقم* (`{oid}`) *بنجاح!*\nتم تسليم طلبك وخصم القيمة المالية من رصيدك الحالي.", parse_mode="Markdown")
-                except: pass
-                await query.edit_message_text(f"✅ تم قبول طلب الشراء رقم {oid} وتم الخصم من حسابه بنجاح.")
-            else:
-                await query.edit_message_text("❌ رصيد الزبون أصبح غير كافٍ الآن لإتمام العملية!")
+                rows.add(r1);
+                rows.add(r2);
+                markup.setKeyboard(rows);
+                em.setReplyMarkup(markup);
+            }
+        } catch (SQLException | TelegramApiException e) {
+            e.printStackTrace();
+        }
 
-        elif data.startswith("reject_buy_"):
-            oid = data.replace("reject_buy_", "")
-            o = db["orders"][oid]
-            o["status"] = "rejected"
-            save_db(db)
-            try:
-                await context.bot.send_message(chat_id=o["user_id"], text="❌ *للأسف، تم رفض طلب الشراء الخاص بك.*\nيرجى التواصل الفوري مع الإدارة لحل المشكلة.")
-            except: pass
-            await query.edit_message_text(f"❌ تم رفض الطلب رقم {oid} وإبلاغ الزبون.")
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
 
-        elif data.startswith("approve_charge_"):
-            oid = data.replace("approve_charge_", "")
-            USER_STATES[user_id] = {"action": "admin_wait_charge_amount", "order_id": oid}
-            await context.bot.send_message(chat_id=ADMIN_ID, text="💵 أرسل قيمة الرصيد المطلوب إضافته إلى حساب العميل بالدولار الأمريكي ($):")
+    // --- حسابي والدعم وباقي الأقسام للزبائن ---
+    private void showMyAccount(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
 
-        elif data.startswith("reject_charge_"):
-            oid = data.replace("reject_charge_", "")
-            o = db["orders"][oid]
-            o["status"] = "rejected"
-            save_db(db)
-            try:
-                await context.bot.send_message(chat_id=o["user_id"], text="❌ *تم رفض طلب شحن الرصيد والتحويل.*\nيرجى الاتصال بالدعم الفني والإدارة للتحقق من العملية.")
-            except: pass
-            await query.edit_message_text(f"❌ تم رفض شحن الحوالة للطلب {oid}.")
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT * FROM users WHERE chat_id = ?")) {
+            ps.setLong(1, chatId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                String text = "👤 *تفاصيل حسابك الشخصي:*\n\n" +
+                        "🆔 الآيدي الخاص بك: `" + chatId + "`\n" +
+                        "📛 الاسم: *" + rs.getString("username") + "*\n\n" +
+                        "💰 *الرصيد المتاح:*\n" +
+                        "💵 بالدولار: `" + rs.getDouble("balance_usd") + " $`\n" +
+                        "🇯🇴 بالدينار الأردني: `" + rs.getDouble("balance_jod") + " د.أ`\n\n" +
+                        "📉 نسبة الخصم المعتمدة لك: `%" + rs.getDouble("discount") + "`";
+                em.setText(text);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
 
-# --- تشغيل البوت الهيكلي ---
-def main():
-    application = Application.builder().token(TOKEN).build()
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 الرجوع للقائمة الرئيسية");
+        btnBack.setCallbackData("BACK_TO_MAIN");
+        row.add(btnBack);
+        rows.add(row);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
 
-    # تشغيل مستمر دون انقطاع
-    application.run_polling()
+    private void showMyOrders(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
 
-if __name__ == "__main__":
-    main()
+        StringBuilder sb = new StringBuilder();
+        sb.append("📦 *طلباتك الحالية تحت المراجعة:*\n\n");
+
+        boolean hasOrders = false;
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT o.id, p.name, o.info FROM orders o JOIN products p ON o.product_id = p.id " +
+                             "WHERE o.user_id = ? AND o.status = 'PENDING'")) {
+            ps.setLong(1, chatId);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                hasOrders = true;
+                sb.append("🔹 *طلب رقم:* `").append(rs.getInt("id")).append("`\n")
+                        .append("🛍️ *المنتج:* ").append(rs.getString("name")).append("\n")
+                        .append("📄 *البيانات:* ").append(rs.getString("info")).append("\n\n");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        if (!hasOrders) {
+            sb.append("⚠️ لا يوجد لديك أي طلبات تحت المراجعة حالياً.");
+        }
+
+        em.setText(sb.toString());
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 الرجوع للقائمة الرئيسية");
+        btnBack.setCallbackData("BACK_TO_MAIN");
+        row.add(btnBack);
+        rows.add(row);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showRechargeMenu(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setText("💳 *اختر وسيلة الشحن المناسبة لك:*");
+        em.setParseMode("Markdown");
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        List<InlineKeyboardButton> r1 = new ArrayList<>();
+        InlineKeyboardButton btnOrange = new InlineKeyboardButton("🍊 محفظة أورنج موني");
+        btnOrange.setCallbackData("RECHARGE_ORANGE");
+        r1.add(btnOrange);
+
+        List<InlineKeyboardButton> r2 = new ArrayList<>();
+        InlineKeyboardButton btnAll = new InlineKeyboardButton("🌍 الشحن للدول العربية والأجنبية");
+        btnAll.setCallbackData("RECHARGE_ALL");
+        r2.add(btnAll);
+
+        List<InlineKeyboardButton> r3 = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 الرجوع للقائمة الرئيسية");
+        btnBack.setCallbackData("BACK_TO_MAIN");
+        r3.add(btnBack);
+
+        rows.add(r1);
+        rows.add(r2);
+        rows.add(r3);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showOrangeMoneyDetails(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
+
+        String msg = "🍊 *طريقة الشحن عبر محفظة أورنج موني:*\n\n" +
+                "👤 اسم المحفظة: `سلمان نوح سلمان البدارين`\n" +
+                "📱 رقم المحفظة: `0776445110`\n" +
+                "🏢 المحفظة: *أورنج موني*\n\n" +
+                "📥 *الخطوة التالية:*\n" +
+                "يرجى إرسال نص رسالة التحويل البنكي المستلمة من المحفظة مباشرة لتأكيد الدفع وشحن حسابك فورا.";
+
+        em.setText(msg);
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 رجوع");
+        btnBack.setCallbackData("MENU_RECHARGE");
+        row.add(btnBack);
+        rows.add(row);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+            userStates.put(chatId, UserState.WAITING_ORANGE_MONEY);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showAllCountriesDetails(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
+
+        String msg = "🌍 *الشحن لجميع الدول العربية والأجنبية:*\n\n" +
+                "نوفر طرق دفع متعددة تناسب بلدك (سواء كنت في سوريا، مصر، العراق، أو أي دولة أخرى).\n\n" +
+                "📥 يرجى التواصل مع الإدارة مباشرة وإرسال اسم بلدك ليتم تزويدك بطرق التحويل المتاحة لك فوراً.\n\n" +
+                "🔗 *للتواصل المباشر مع الإدارة:* \n" +
+                "تليجرام: @htb1b";
+
+        em.setText(msg);
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 رجوع");
+        btnBack.setCallbackData("MENU_RECHARGE");
+        row.add(btnBack);
+        rows.add(row);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showSupportDetails(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
+
+        String msg = "🛠️ *قسم الدعم الفني:*\n\n" +
+                "📞 رقم الواتساب: +962776445110\n" +
+                "✈️ التليجرام: htb1b@";
+
+        em.setText(msg);
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 الرجوع للقائمة الرئيسية");
+        btnBack.setCallbackData("BACK_TO_MAIN");
+        row.add(btnBack);
+        rows.add(row);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // --- لوحة التحكم الخاصة بالأدمن ---
+    private void showAdminPanel(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setText("🛠️ *مرحباً بك في لوحة الإدارة والتحكم (الآدمن):*");
+        em.setParseMode("Markdown");
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        List<InlineKeyboardButton> r1 = new ArrayList<>();
+        InlineKeyboardButton btn1 = new InlineKeyboardButton("📁 إدارة وتعديل المتجر");
+        btn1.setCallbackData("MENU_STORE");
+        r1.add(btn1);
+
+        List<InlineKeyboardButton> r2 = new ArrayList<>();
+        InlineKeyboardButton btn2 = new InlineKeyboardButton("👥 قائمة المشتركين");
+        btn2.setCallbackData("ADMIN_USER_LIST");
+        InlineKeyboardButton btn3 = new InlineKeyboardButton("📉 إعداد الخصومات للزبائن");
+        btn3.setCallbackData("ADMIN_DISCOUNT_MENU");
+        r2.add(btn2);
+        r2.add(btn3);
+
+        List<InlineKeyboardButton> r3 = new ArrayList<>();
+        InlineKeyboardButton btn4 = new InlineKeyboardButton("📢 إرسال إعلان / بث");
+        btn4.setCallbackData("ADMIN_BROADCAST_MENU");
+        r3.add(btn4);
+
+        List<InlineKeyboardButton> r4 = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 الرجوع للواجهة الرئيسية للزبون");
+        btnBack.setCallbackData("BACK_TO_MAIN");
+        r4.add(btnBack);
+
+        rows.add(r1);
+        rows.add(r2);
+        rows.add(r3);
+        rows.add(r4);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showUsersList(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setParseMode("Markdown");
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("👥 *قائمة جميع المشتركين المسجلين بالبوت:*\n\n");
+
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT * FROM users")) {
+            while (rs.next()) {
+                sb.append("👤 الاسم: *").append(rs.getString("username")).append("*\n")
+                        .append("🆔 الآيدي: `").append(rs.getLong("chat_id")).append("`\n")
+                        .append("💵 الرصيد: ").append(rs.getDouble("balance_usd")).append(" $ (").append(rs.getDouble("balance_jod")).append(" JOD)\n")
+                        .append("📉 الخصم: %").append(rs.getDouble("discount")).append("\n")
+                        .append("----------------------------\n");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        em.setText(sb.toString());
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 رجوع للوحة الآدمن");
+        btnBack.setCallbackData("ADMIN_PANEL");
+        row.add(btnBack);
+        rows.add(row);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showBroadcastMenu(long chatId, int messageId) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setText("📢 *تحديد الجمهور المستهدف بالإعلان:*");
+        em.setParseMode("Markdown");
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        List<InlineKeyboardButton> r1 = new ArrayList<>();
+        InlineKeyboardButton b1 = new InlineKeyboardButton("🌍 إعلان لجميع الأعضاء");
+        b1.setCallbackData("BROADCAST_ALL");
+        InlineKeyboardButton b2 = new InlineKeyboardButton("👤 إرسال لشخص محدد");
+        b2.setCallbackData("BROADCAST_SPECIFIC");
+        r1.add(b1);
+        r1.add(b2);
+
+        List<InlineKeyboardButton> r2 = new ArrayList<>();
+        InlineKeyboardButton btnBack = new InlineKeyboardButton("🔙 رجوع");
+        btnBack.setCallbackData("ADMIN_PANEL");
+        r2.add(btnBack);
+
+        rows.add(r1);
+        rows.add(r2);
+        markup.setKeyboard(rows);
+        em.setReplyMarkup(markup);
+
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // --- العمليات على قواعد البيانات والمنطق البرمجي الداخلي ---
+
+    private void registerUser(long chatId, String name) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT OR IGNORE INTO users (chat_id, username) VALUES (?, ?)")) {
+            ps.setLong(1, chatId);
+            ps.setString(2, name);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void addCategory(String name, int parentId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("INSERT INTO categories (name, parent_id) VALUES (?, ?)")) {
+            ps.setString(1, name);
+            ps.setInt(2, parentId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void deleteCategory(int catId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL)) {
+            // حذف المنتجات التابعة
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM products WHERE category_id = ?")) {
+                ps.setInt(1, catId);
+                ps.executeUpdate();
+            }
+            // حذف القسم نفسه
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM categories WHERE id = ?")) {
+                ps.setInt(1, catId);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private int getParentCategoryId(int childId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT parent_id FROM categories WHERE id = ?")) {
+            ps.setInt(1, childId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                return rs.getInt("parent_id");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return 0;
+    }
+
+    private void addProduct(int catId, String name, String desc, double priceJod, double priceUsd) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO products (category_id, name, description, price_jod, price_usd) VALUES (?, ?, ?, ?, ?)")) {
+            ps.setInt(1, catId);
+            ps.setString(2, name);
+            ps.setString(3, desc);
+            ps.setDouble(4, priceJod);
+            ps.setDouble(5, priceUsd);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void deleteProduct(int prodId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("DELETE FROM products WHERE id = ?")) {
+            ps.setInt(1, prodId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private String getProductName(int prodId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT name FROM products WHERE id = ?")) {
+            ps.setInt(1, prodId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getString("name");
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return "منتج غير معروف";
+    }
+
+    private double getUserDiscount(long userId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("SELECT discount FROM users WHERE chat_id = ?")) {
+            ps.setLong(1, userId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getDouble("discount");
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return 0.0;
+    }
+
+    private void updateUserDiscount(long userId, double discount) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("UPDATE users SET discount = ? WHERE chat_id = ?")) {
+            ps.setDouble(1, discount);
+            ps.setLong(2, userId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private int createOrder(long userId, int prodId, String info) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO orders (user_id, product_id, info) VALUES (?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+            ps.setLong(1, userId);
+            ps.setInt(2, prodId);
+            ps.setString(3, info);
+            ps.executeUpdate();
+            ResultSet rs = ps.getGeneratedKeys();
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return 0;
+    }
+
+    private int createRechargeRequest(long userId, String txText) {
+        // نستخدم نفس جدول الطلبات لتبسيط الحفظ ونحدد منتج افتراضي id = 0 ليعبر عن الشحن
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO orders (user_id, product_id, info, status) VALUES (?, 0, ?, 'PENDING')", Statement.RETURN_GENERATED_KEYS)) {
+            ps.setLong(1, userId);
+            ps.setString(2, txText);
+            ps.executeUpdate();
+            ResultSet rs = ps.getGeneratedKeys();
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return 0;
+    }
+
+    private void updateOrderStatus(int orderId, String status) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement("UPDATE orders SET status = ? WHERE id = ?")) {
+            ps.setString(1, status);
+            ps.setInt(2, orderId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void updateUserBalance(long userId, double diffJod, double diffUsd) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE users SET balance_jod = balance_jod + ?, balance_usd = balance_usd + ? WHERE chat_id = ?")) {
+            ps.setDouble(1, diffJod);
+            ps.setDouble(2, diffUsd);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void processProductPurchaseAccept(int orderId, long userId, int prodId) {
+        try (Connection conn = DriverManager.getConnection(DB_URL)) {
+            // جلب أسعار المنتج
+            double originalJod = 0, originalUsd = 0;
+            try (PreparedStatement ps = conn.prepareStatement("SELECT price_jod, price_usd FROM products WHERE id = ?")) {
+                ps.setInt(1, prodId);
+                ResultSet rs = ps.executeQuery();
+                if (rs.next()) {
+                    originalJod = rs.getDouble("price_jod");
+                    originalUsd = rs.getDouble("price_usd");
+                }
+            }
+
+            // جلب بيانات العميل للتأكد من رصيده بعد الخصم المعتمد له
+            double discount = getUserDiscount(userId);
+            double finalJod = originalJod * (1 - (discount / 100));
+            double finalUsd = originalUsd * (1 - (discount / 100));
+
+            double userJod = 0, userUsd = 0;
+            try (PreparedStatement ps = conn.prepareStatement("SELECT balance_jod, balance_usd FROM users WHERE chat_id = ?")) {
+                ps.setLong(1, userId);
+                ResultSet rs = ps.executeQuery();
+                if (rs.next()) {
+                    userJod = rs.getDouble("balance_jod");
+                    userUsd = rs.getDouble("balance_usd");
+                }
+            }
+
+            if (userUsd >= finalUsd) {
+                // خصم الرصيد وتحديث حالة الطلب
+                updateUserBalance(userId, -finalJod, -finalUsd);
+                updateOrderStatus(orderId, "ACCEPTED");
+                sendMessage(userId, "🎉 تم قبول طلبك بنجاح! تم خصم بقيمة `" + finalUsd + " $` / `" + finalJod + " د.أ` من رصيدك الحالي.");
+                sendMessage(ADMIN_ID, "✅ تم إتمام وتأكيد الشراء للزبون، وتم الخصم من حسابه بنجاح.");
+            } else {
+                sendMessage(userId, "⚠️ رصيدك الحالي غير كافي لإتمام هذه الخدمة، يرجى تعبئة وشحن حسابك أولاً.");
+                sendMessage(ADMIN_ID, "🛑 محاولة قبول فاشلة: رصيد الزبون لا يكفي لإتمام عملية الشراء!");
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void broadcastToAll(String text) {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT chat_id FROM users")) {
+            while (rs.next()) {
+                sendMessage(rs.getLong("chat_id"), "📢 إعلان هام:\n\n" + text);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // --- إرسال الرسائل وتعديلها ---
+    private void sendMessage(long chatId, String text) {
+        SendMessage sm = new SendMessage();
+        sm.setChatId(String.valueOf(chatId));
+        sm.setText(text);
+        sm.setParseMode("Markdown");
+        try {
+            execute(sm);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void sendAdminMessageWithMarkup(String text, InlineKeyboardMarkup markup) {
+        SendMessage sm = new SendMessage();
+        sm.setChatId(String.valueOf(ADMIN_ID));
+        sm.setText(text);
+        sm.setParseMode("Markdown");
+        sm.setReplyMarkup(markup);
+        try {
+            execute(sm);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void editMessage(long chatId, int messageId, String text) {
+        EditMessageText em = new EditMessageText();
+        em.setChatId(String.valueOf(chatId));
+        em.setMessageId(messageId);
+        em.setText(text);
+        em.setParseMode("Markdown");
+        try {
+            execute(em);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+}
