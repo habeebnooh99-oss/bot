@@ -20,7 +20,7 @@ public class AlexCardBot extends TelegramLongPollingBot {
 
     private static final String BOT_TOKEN = "8811163076:AAHlcXGmsZcAFQM_Or4jlVD-luIsDo9cxnI";
     private static final String BOT_USERNAME = "ALEX CARD";
-    private static final long ADMIN_ID = 8529336745L;
+    private static final long ADMIN_ID = 8529336745;
     private static final String DB_URL = "jdbc:sqlite:alexcard.db";
 
     // لحفظ حالة المحادثة لكل مستخدم (FSM)
